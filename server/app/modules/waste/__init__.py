@@ -1,0 +1,1 @@
+# Waste module for WasteWise.

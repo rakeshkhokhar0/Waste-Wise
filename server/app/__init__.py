@@ -1,0 +1,1 @@
+# WasteWise backend application package.
