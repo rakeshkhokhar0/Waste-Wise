@@ -23,6 +23,7 @@ If you use `uv`, install dependencies and start the API with:
 pip install uv
 uv sync
 cd ..(back to parent folder)
+server/.venv/scripts/activate (Activate virtual environment)
 uv run uvicorn server.app.main:app --reload
 ```
 
