@@ -4,6 +4,11 @@ import Signup from './pages/Signup'
 import AccountActionPage from './pages/AccountActionPage'
 import Home from './pages/Home'
 import Dashboard from './pages/Dashboard'
+import Marketplace from './pages/MarketPlace'
+import RewardDetail from './pages/RewardDetail'
+import MyImpact from './pages/MyImpact'
+import WasteClassification from './pages/WasteClassification'
+import WasteJourney from './pages/WasteJourney'
 
 const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1'
@@ -13,15 +18,11 @@ function App() {
   const [path, setPath] = useState(window.location.pathname)
 
   useEffect(() => {
-    const handlePopState = () => {
-      setPath(window.location.pathname)
-    }
+    const handlePopState = () => setPath(window.location.pathname)
 
     window.addEventListener('popstate', handlePopState)
 
-    return () => {
-      window.removeEventListener('popstate', handlePopState)
-    }
+    return () => window.removeEventListener('popstate', handlePopState)
   }, [])
 
   const navigate = (nextPath) => {
@@ -38,12 +39,8 @@ function App() {
       if (refreshToken) {
         await fetch(`${API_BASE_URL}/auth/logout`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            refresh_token: refreshToken,
-          }),
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refresh_token: refreshToken }),
         })
       }
     } finally {
@@ -60,54 +57,55 @@ function App() {
   }
 
   if (path === '/auth/verify-email') {
-    return (
-      <AccountActionPage
-        mode="verify"
-        onNavigate={navigate}
-      />
-    )
+    return <AccountActionPage mode="verify" onNavigate={navigate} />
   }
 
   if (path === '/auth/forgot-password') {
-    return (
-      <AccountActionPage
-        mode="forgot"
-        onNavigate={navigate}
-      />
-    )
+    return <AccountActionPage mode="forgot" onNavigate={navigate} />
   }
 
   if (path === '/auth/reset-password') {
+    return <AccountActionPage mode="reset" onNavigate={navigate} />
+  }
+
+  if (path === '/dashboard') {
+    return <Dashboard onNavigate={navigate} onLogout={logout} />
+  }
+
+  if (path === '/marketplace') {
+    return <Marketplace onNavigate={navigate} />
+  }
+
+  if (path.startsWith('/marketplace/reward/')) {
+    const rewardId = path.split('/').pop()
+
     return (
-      <AccountActionPage
-        mode="reset"
+      <RewardDetail
+        rewardId={rewardId}
         onNavigate={navigate}
       />
     )
   }
 
-  if (path === '/dashboard') {
-    return (
-      <Dashboard
-        onNavigate={navigate}
-        onLogout={logout}
-      />
-    )
+  if (path === '/my-impact') {
+    return <MyImpact onNavigate={navigate} />
+  }
+
+  if (path === '/waste-classification') {
+    return <WasteClassification onNavigate={navigate} />
+  }
+
+  if (path === '/waste-journey') {
+    return <WasteJourney onNavigate={navigate} />
   }
 
   if (path === '/') {
     return <Home onNavigate={navigate} />
   }
 
-  if (path === '/signup') {
-    return (
-      <Signup
-        onSwitchToLogin={() => navigate('/login')}
-      />
-    )
-  }
-
-  return (
+  return path === '/signup' ? (
+    <Signup onSwitchToLogin={() => navigate('/login')} />
+  ) : (
     <Login
       onSwitchToSignup={() => navigate('/signup')}
       onForgotPassword={() => navigate('/auth/forgot-password')}
@@ -116,4 +114,4 @@ function App() {
   )
 }
 
-export default App;
+export default App

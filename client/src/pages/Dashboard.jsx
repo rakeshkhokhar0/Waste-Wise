@@ -4,31 +4,56 @@ import {
   ArrowRight,
   Award,
   Bell,
+  BookOpen,
+  Camera,
   ChevronRight,
+  Coffee,
+  Dumbbell,
   ImageUp,
   Leaf,
   LogOut,
-  Medal,
   Recycle,
   Sprout,
+  Stethoscope,
   Trash2,
 } from 'lucide-react'
 
 const rewards = [
   {
-    icon: Recycle,
-    title: 'Recycle more, earn more',
-    text: 'Earn points every time you correctly dispose of waste.',
+    icon: Coffee,
+    title: 'Free Coffee',
+    partner: 'Green Brew Cafe',
+    requiredPoints: 500,
+    currentPoints: 340,
+    expiry: 'Saturday',
+    available: 10,
   },
   {
-    icon: Award,
-    title: 'Unlock new badges',
-    text: 'Complete waste challenges and collect achievement badges.',
+    icon: Stethoscope,
+    title: 'Free Consultation',
+    partner: 'Green Health Clinic',
+    requiredPoints: 750,
+    currentPoints: 340,
+    expiry: 'Sunday',
+    available: 5,
   },
   {
-    icon: Medal,
-    title: 'Redeem your points',
-    text: 'Turn WasteWise points into exciting rewards.',
+    icon: Dumbbell,
+    title: 'Free Gym Week',
+    partner: 'GreenFit Gym',
+    requiredPoints: 1000,
+    currentPoints: 340,
+    expiry: 'Sunday',
+    available: 3,
+  },
+  {
+    icon: BookOpen,
+    title: 'Novel Discount',
+    partner: 'EcoReads',
+    requiredPoints: 600,
+    currentPoints: 340,
+    expiry: '30 August',
+    available: 20,
   },
 ]
 
@@ -38,6 +63,7 @@ const activity = [
     type: 'Plastic',
     amount: '1.2 kg',
     action: 'Recycled',
+    points: '+36 Green Points',
     date: 'Today',
     color: 'bg-sky-100 text-sky-700',
   },
@@ -46,6 +72,7 @@ const activity = [
     type: 'Organic',
     amount: '2.5 kg',
     action: 'Composted',
+    points: '+50 Green Points',
     date: 'Yesterday',
     color: 'bg-green-100 text-green-700',
   },
@@ -54,6 +81,7 @@ const activity = [
     type: 'Paper',
     amount: '0.8 kg',
     action: 'Recycled',
+    points: '+24 Green Points',
     date: '2 days ago',
     color: 'bg-amber-100 text-amber-700',
   },
@@ -66,31 +94,67 @@ function Dashboard({ onNavigate, onLogout }) {
   const [rewardIndex, setRewardIndex] = useState(0)
 
   // ==========================================
-  // GET LOGGED-IN USERNAME
+  // LOGGED-IN USER
   // ==========================================
 
   const username =
-    window.localStorage.getItem(
-      'wastewise_username'
-    ) || 'User'
+    window.localStorage.getItem('wastewise_username') || 'User'
 
-  // First letter for profile circle
   const usernameInitial =
     username.charAt(0).toUpperCase()
+
+  // ==========================================
+  // REWARD
+  // ==========================================
 
   const reward = rewards[rewardIndex]
   const RewardIcon = reward.icon
 
+  const progress = Math.min(
+    (reward.currentPoints / reward.requiredPoints) * 100,
+    100
+  )
+
+  const remainingPoints = Math.max(
+    reward.requiredPoints - reward.currentPoints,
+    0
+  )
+
   // ==========================================
-  // SELECT IMAGE
+  // WASTE IMAGE SELECTION
   // ==========================================
 
   const selectImage = (event) => {
     const file = event.target.files?.[0]
 
     if (file) {
-      setImage(URL.createObjectURL(file))
+      const imageUrl = URL.createObjectURL(file)
+
+      setImage(imageUrl)
+
+      sessionStorage.setItem(
+        'wastewise_uploaded_image',
+        imageUrl
+      )
+
+      onNavigate('/waste-classification')
     }
+  }
+
+  // ==========================================
+  // REWARD NAVIGATION
+  // ==========================================
+
+  const previousReward = () => {
+    setRewardIndex(
+      (rewardIndex - 1 + rewards.length) % rewards.length
+    )
+  }
+
+  const nextReward = () => {
+    setRewardIndex(
+      (rewardIndex + 1) % rewards.length
+    )
   }
 
   // ==========================================
@@ -98,7 +162,6 @@ function Dashboard({ onNavigate, onLogout }) {
   // ==========================================
 
   const handleLogout = () => {
-    // Remove authentication information
     window.localStorage.removeItem(
       'wastewise_access_token'
     )
@@ -107,73 +170,70 @@ function Dashboard({ onNavigate, onLogout }) {
       'wastewise_refresh_token'
     )
 
-    // Remove username
     window.localStorage.removeItem(
       'wastewise_username'
     )
 
-    // Call parent logout function
     onLogout?.()
   }
 
   return (
     <main className="min-h-screen bg-[#f5f8f3] text-slate-900">
 
-      {/* ==========================================
-          HEADER
-      ========================================== */}
+      {/* HEADER */}
 
       <header className="border-b border-green-100 bg-white">
 
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-5 px-6 py-4 lg:px-10">
 
-          {/* ========================================
-              LOGO
-          ======================================== */}
+          {/* LOGO */}
 
           <button
             type="button"
-            onClick={() =>
-              onNavigate('/dashboard')
-            }
+            onClick={() => onNavigate('/dashboard')}
             className="flex items-center gap-2 text-xl font-bold text-green-800"
           >
             <Leaf size={23} />
-
             WasteWise
           </button>
 
-          {/* ========================================
-              NAVIGATION
-          ======================================== */}
+          {/* NAVIGATION */}
 
           <nav className="hidden items-center gap-6 text-sm font-semibold text-slate-500 md:flex">
 
-            <button className="text-green-700">
+            <button
+              type="button"
+              onClick={() => onNavigate('/dashboard')}
+              className="text-green-700"
+            >
               Home
             </button>
 
-            <button>
+            <button
+              type="button"
+            >
               My activity
             </button>
 
-            <button>
-              Rewards
+            <button
+              type="button"
+              onClick={() => onNavigate('/marketplace')}
+            >
+              MarketPlace
             </button>
 
-            <button>
+            <button
+              type="button"
+              onClick={() => onNavigate('/my-impact')}
+            >
               My impact
             </button>
 
           </nav>
 
-          {/* ========================================
-              USER ACTIONS
-          ======================================== */}
+          {/* USER ACTIONS */}
 
           <div className="flex items-center gap-3">
-
-            {/* Notification */}
 
             <button
               type="button"
@@ -182,19 +242,13 @@ function Dashboard({ onNavigate, onLogout }) {
               <Bell size={20} />
             </button>
 
-            {/* ======================================
-                USER PROFILE
-            ====================================== */}
+            {/* USER PROFILE */}
 
             <div className="flex items-center gap-2 rounded-full bg-green-50 py-1.5 pl-1.5 pr-3">
-
-              {/* First letter of username */}
 
               <span className="flex h-8 w-8 items-center justify-center rounded-full bg-green-700 text-sm font-bold text-white">
                 {usernameInitial}
               </span>
-
-              {/* Actual username */}
 
               <span className="hidden text-sm font-semibold sm:block">
                 {username}
@@ -202,22 +256,18 @@ function Dashboard({ onNavigate, onLogout }) {
 
             </div>
 
-            {/* ======================================
-                LOGOUT
-            ====================================== */}
+            {/* LOGOUT */}
 
             <button
               type="button"
               onClick={handleLogout}
               className="flex items-center gap-2 rounded-lg border border-green-200 px-3 py-2 text-sm font-semibold text-green-800 transition hover:bg-green-50"
             >
-
               <LogOut size={17} />
 
               <span className="hidden sm:inline">
                 Logout
               </span>
-
             </button>
 
           </div>
@@ -226,15 +276,11 @@ function Dashboard({ onNavigate, onLogout }) {
 
       </header>
 
-      {/* ==========================================
-          MAIN CONTENT
-      ========================================== */}
+      {/* MAIN CONTENT */}
 
       <div className="mx-auto max-w-7xl px-6 py-10 lg:px-10">
 
-        {/* ========================================
-            WELCOME
-        ======================================== */}
+        {/* WELCOME */}
 
         <section>
 
@@ -247,23 +293,16 @@ function Dashboard({ onNavigate, onLogout }) {
           </h1>
 
           <p className="mt-2 text-slate-600">
-            Let's make your waste count. Identify,
-            dispose, and earn rewards.
+            Let's make your waste count. Identify, dispose, and earn rewards.
           </p>
 
         </section>
 
-        {/* ==========================================
-            WASTE IDENTIFICATION
-        ========================================== */}
+        {/* WASTE UPLOAD */}
 
         <section className="mt-9 overflow-hidden rounded-3xl bg-gradient-to-br from-green-800 to-emerald-600 p-7 text-white shadow-xl shadow-green-950/10 lg:p-10">
 
           <div className="grid items-center gap-8 lg:grid-cols-[1fr_.65fr]">
-
-            {/* ======================================
-                LEFT CONTENT
-            ====================================== */}
 
             <div>
 
@@ -282,30 +321,29 @@ function Dashboard({ onNavigate, onLogout }) {
               </h2>
 
               <p className="mt-4 max-w-xl leading-relaxed text-green-50">
-                Upload a photo of your waste.
-                WasteWise will help identify it
-                and recommend the right way to
-                dispose of it.
+                Upload a photo or click a picture of your waste.
+                WasteWise will help identify it and recommend the
+                right way to dispose of it.
               </p>
-
-              {/* ==================================
-                  UPLOAD PHOTO ONLY
-              ================================== */}
 
               <div className="mt-6 flex flex-wrap gap-3">
 
                 <button
                   type="button"
-                  onClick={() =>
-                    inputRef.current?.click()
-                  }
+                  onClick={() => inputRef.current?.click()}
                   className="flex items-center gap-2 rounded-xl bg-white px-5 py-3 font-semibold text-green-800 transition hover:bg-green-50"
                 >
+                  <Camera size={18} />
+                  Click photo
+                </button>
 
+                <button
+                  type="button"
+                  onClick={() => inputRef.current?.click()}
+                  className="flex items-center gap-2 rounded-xl border border-white/30 px-5 py-3 font-semibold transition hover:bg-white/10"
+                >
                   <ImageUp size={18} />
-
                   Upload photo
-
                 </button>
 
                 <input
@@ -324,9 +362,7 @@ function Dashboard({ onNavigate, onLogout }) {
 
             </div>
 
-            {/* ======================================
-                IMAGE PREVIEW
-            ====================================== */}
+            {/* IMAGE PREVIEW */}
 
             <div className="mx-auto w-full max-w-sm">
 
@@ -345,7 +381,7 @@ function Dashboard({ onNavigate, onLogout }) {
                   <div className="flex h-full flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-white/40 bg-white/5 text-center">
 
                     <span className="rounded-full bg-white/15 p-6">
-                      <ImageUp size={44} />
+                      <Camera size={44} />
                     </span>
 
                     <p className="mt-5 font-semibold">
@@ -368,75 +404,151 @@ function Dashboard({ onNavigate, onLogout }) {
 
         </section>
 
-        {/* ==========================================
-            REWARDS
-        ========================================== */}
+        {/* REWARDS CAROUSEL */}
 
-        <section className="mt-7 flex items-center justify-between gap-4 rounded-2xl border border-amber-100 bg-[#fffaf0] p-5 sm:p-7">
+        <section className="mt-7 overflow-hidden rounded-2xl border border-amber-100 bg-[#fffaf0] p-5 shadow-sm sm:p-7">
 
-          {/* Previous */}
+          <div className="flex items-center gap-4">
 
-          <button
-            type="button"
-            onClick={() =>
-              setRewardIndex(
-                (rewardIndex -
-                  1 +
-                  rewards.length) %
-                  rewards.length
-              )
-            }
-            className="rounded-full bg-white p-2 text-amber-700 shadow-sm"
-          >
-            <ArrowLeft size={19} />
-          </button>
+            <button
+              type="button"
+              onClick={previousReward}
+              className="flex-shrink-0 rounded-full bg-white p-2 text-amber-700 shadow-sm transition hover:bg-amber-50"
+            >
+              <ArrowLeft size={19} />
+            </button>
 
-          {/* Reward */}
+            <div className="flex min-w-0 flex-1 items-center gap-5">
 
-          <div className="flex flex-1 items-center gap-4">
+              <span className="hidden flex-shrink-0 rounded-2xl bg-amber-100 p-4 text-amber-700 sm:block">
+                <RewardIcon size={30} />
+              </span>
 
-            <span className="hidden rounded-2xl bg-amber-100 p-4 text-amber-700 sm:block">
-              <RewardIcon size={28} />
-            </span>
+              <div className="min-w-0 flex-1">
 
-            <div>
+                <p className="text-xs font-bold tracking-[0.15em] text-amber-700">
+                  WASTEWISE REWARD
+                </p>
 
-              <p className="text-xs font-bold tracking-[0.15em] text-amber-700">
-                WASTEWISE REWARDS
-              </p>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
 
-              <h2 className="mt-1 text-xl font-bold">
-                {reward.title}
-              </h2>
+                  <h2 className="text-xl font-bold">
+                    {reward.title}
+                  </h2>
 
-              <p className="mt-1 text-sm text-slate-600">
-                {reward.text}
-              </p>
+                  <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">
+                    {reward.available} available
+                  </span>
+
+                </div>
+
+                <p className="mt-1 text-sm font-medium text-slate-600">
+                  {reward.partner}
+                </p>
+
+                {/* POINTS */}
+
+                <div className="mt-4">
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold">
+
+                    <span>
+                      {reward.currentPoints} / {reward.requiredPoints} Green Points
+                    </span>
+
+                    <span className="text-amber-700">
+                      {remainingPoints > 0
+                        ? `${remainingPoints} points remaining`
+                        : 'Reward unlocked!'}
+                    </span>
+
+                  </div>
+
+                  <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-amber-100">
+
+                    <div
+                      className="h-full rounded-full bg-amber-500 transition-all duration-500"
+                      style={{
+                        width: `${progress}%`,
+                      }}
+                    />
+
+                  </div>
+
+                </div>
+
+                {/* EXPIRY */}
+
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+
+                  <span>
+                    Ends {reward.expiry}
+                  </span>
+
+                  <span>•</span>
+
+                  <span>
+                    {reward.available} rewards available
+                  </span>
+
+                </div>
+
+              </div>
+
+              <button
+                type="button"
+                onClick={() => onNavigate('/rewards')}
+                className="hidden flex-shrink-0 rounded-xl bg-amber-500 px-5 py-3 text-sm font-bold text-white transition hover:bg-amber-600 lg:block"
+              >
+                View Reward
+              </button>
 
             </div>
 
+            <button
+              type="button"
+              onClick={nextReward}
+              className="flex-shrink-0 rounded-full bg-white p-2 text-amber-700 shadow-sm transition hover:bg-amber-50"
+            >
+              <ArrowRight size={19} />
+            </button>
+
           </div>
 
-          {/* Next */}
+          {/* MOBILE VIEW REWARD BUTTON */}
 
           <button
             type="button"
-            onClick={() =>
-              setRewardIndex(
-                (rewardIndex + 1) %
-                  rewards.length
-              )
-            }
-            className="rounded-full bg-white p-2 text-amber-700 shadow-sm"
+            onClick={() => onNavigate('/rewards')}
+            className="mt-5 w-full rounded-xl bg-amber-500 px-5 py-3 text-sm font-bold text-white transition hover:bg-amber-600 lg:hidden"
           >
-            <ArrowRight size={19} />
+            View Reward
           </button>
+
+          {/* CAROUSEL INDICATORS */}
+
+          <div className="mt-5 flex justify-center gap-2">
+
+            {rewards.map((_, index) => (
+
+              <button
+                key={index}
+                type="button"
+                onClick={() => setRewardIndex(index)}
+                className={`h-2 rounded-full transition-all ${
+                  index === rewardIndex
+                    ? 'w-6 bg-amber-500'
+                    : 'w-2 bg-amber-200'
+                }`}
+              />
+
+            ))}
+
+          </div>
 
         </section>
 
-        {/* ==========================================
-            YOUR IMPACT
-        ========================================== */}
+        {/* IMPACT */}
 
         <section className="mt-10">
 
@@ -454,7 +566,11 @@ function Dashboard({ onNavigate, onLogout }) {
 
             </div>
 
-            <button className="hidden items-center gap-1 text-sm font-semibold text-green-700 sm:flex">
+            <button
+              type="button"
+              onClick={() => onNavigate('/my-impact')}
+              className="hidden items-center gap-1 text-sm font-semibold text-green-700 sm:flex"
+            >
               View full impact
               <ChevronRight size={16} />
             </button>
@@ -469,32 +585,28 @@ function Dashboard({ onNavigate, onLogout }) {
                 value: '12.5 kg',
                 note: 'This month',
                 icon: Trash2,
-                color:
-                  'text-slate-600 bg-slate-100',
+                color: 'text-slate-600 bg-slate-100',
               },
               {
                 label: 'Waste recycled',
                 value: '7.2 kg',
                 note: '58% of total waste',
                 icon: Recycle,
-                color:
-                  'text-sky-700 bg-sky-100',
+                color: 'text-sky-700 bg-sky-100',
               },
               {
-                label: 'Eco score',
-                value: '82',
+                label: 'Sustainability score',
+                value: '82 / 100',
                 note: 'Great progress!',
                 icon: Leaf,
-                color:
-                  'text-green-700 bg-green-100',
+                color: 'text-green-700 bg-green-100',
               },
               {
-                label: 'Reward points',
+                label: 'Green points',
                 value: '340',
-                note: '60 to next badge',
+                note: '160 to next reward',
                 icon: Award,
-                color:
-                  'text-amber-700 bg-amber-100',
+                color: 'text-amber-700 bg-amber-100',
               },
             ].map(
               ({
@@ -537,9 +649,7 @@ function Dashboard({ onNavigate, onLogout }) {
 
         </section>
 
-        {/* ==========================================
-            RECENT ACTIVITY
-        ========================================== */}
+        {/* RECENT ACTIVITY */}
 
         <section className="mt-10 pb-10">
 
@@ -557,7 +667,10 @@ function Dashboard({ onNavigate, onLogout }) {
 
             </div>
 
-            <button className="hidden items-center gap-1 text-sm font-semibold text-green-700 sm:flex">
+            <button
+              type="button"
+              className="hidden items-center gap-1 text-sm font-semibold text-green-700 sm:flex"
+            >
               View history
               <ChevronRight size={16} />
             </button>
@@ -572,6 +685,7 @@ function Dashboard({ onNavigate, onLogout }) {
                 type,
                 amount,
                 action,
+                points,
                 date,
                 color,
               }) => (
@@ -603,9 +717,17 @@ function Dashboard({ onNavigate, onLogout }) {
 
                   </div>
 
-                  <strong className="text-sm">
-                    {amount}
-                  </strong>
+                  <div className="hidden text-right sm:block">
+
+                    <strong className="text-sm">
+                      {amount}
+                    </strong>
+
+                    <p className="text-xs font-semibold text-amber-600">
+                      {points}
+                    </p>
+
+                  </div>
 
                   <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-semibold text-green-700">
                     {action}
@@ -626,4 +748,4 @@ function Dashboard({ onNavigate, onLogout }) {
   )
 }
 
-export default Dashboard;
+export default Dashboard

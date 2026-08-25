@@ -776,13 +776,25 @@ function AuthPage({
               </div>
             ) : null}
 
-            {/* ========================================
-                TERMS - SIGNUP ONLY
-            ======================================== */}
+                       {/* TERMS / REMEMBER ME */}
 
-            {!isLogin ? (
+            {isLogin ? (
+              <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={loginForm.remember}
+                  onChange={(event) =>
+                    updateLoginForm(
+                      'remember',
+                      event.target.checked
+                    )
+                  }
+                  className="h-4 w-4 accent-green-600"
+                />
+                Remember me for 30 days
+              </label>
+            ) : (
               <label className="flex items-start gap-2 text-sm text-gray-600 cursor-pointer">
-
                 <input
                   type="checkbox"
                   checked={signupForm.agreeTerms}
@@ -798,13 +810,10 @@ function AuthPage({
                 <span>
                   I agree to the terms and privacy policy.
                 </span>
-
               </label>
-            ) : null}
+            )}
 
-            {/* ========================================
-                FORGOT PASSWORD
-            ======================================== */}
+            {/* FORGOT PASSWORD */}
 
             {isLogin ? (
               <button
