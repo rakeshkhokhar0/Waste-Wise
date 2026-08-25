@@ -61,7 +61,7 @@ class AuthServices:
         request:RegisterRequest
     )->MessageResponse:
         try:
-            existing_user_email = await self.user_repository.get_user_by_identifier(request.email)
+            existing_user_email = await self.user_repository.get_user_by_identifier(request.email.lower())
             existing_user_username = await self.user_repository.get_user_by_identifier(request.username)
 
 
@@ -80,7 +80,7 @@ class AuthServices:
 
             user = await self.user_repository.create_user(
                 User(
-                    email=request.email,
+                    email=request.email.lower(),
                     user_name=request.username,
                     password_hash=hash_password
                 )
