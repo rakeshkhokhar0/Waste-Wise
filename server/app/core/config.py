@@ -87,3 +87,16 @@ class ResetPasswordSetting(BaseSettings):
     )
 
 resetpassword = ResetPasswordSetting()
+
+
+class CloudinarySetting(BaseSettings):
+    CLOUDINARY_CLOUD_NAME :str 
+    CLOUDINARY_API_KEY : str
+    CLOUDINARY_API_SECRET : str
+    SECURE : bool
+    model_config = SettingsConfigDict(
+            env_file=ENV_FILE,
+            extra="ignore",
+        )
+
+cloudinarysetting = CloudinarySetting()

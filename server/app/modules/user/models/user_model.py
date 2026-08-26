@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from server.app.modules.authencation.models.email_verification import EmailVerification
     from server.app.modules.authencation.models.refresh_token import RefreshToken
     from server.app.modules.authencation.models.reset_password import ResetPassword
+    from server.app.modules.waste.models import WasteAnalysis
 
 class User(Base):
     __tablename__="users"
@@ -98,5 +99,11 @@ class User(Base):
         cascade= "all,delete-orphan",
         lazy="selectin"
     )
+
+    # waste_analyses: Mapped[list["WasteAnalysis"]] = relationship(
+    #     "WasteAnalysis",
+    #     back_populates="user",
+    #     cascade="all, delete-orphan",
+    # )
 
 
