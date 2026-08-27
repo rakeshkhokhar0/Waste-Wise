@@ -1,9 +1,13 @@
 from openai import AsyncOpenAI
 
-from app.core.config import openaisettting
-from app.modules.waste.schemas import (
-    AIWasteAnalysis,
-)
+from server.app.core.config import openaisettting
+from server.app.modules.waste.schemas import AIWasteAnalysis
+
+
+class AIServiceError(Exception):
+    """Base exception for WasteWise AI service errors."""
+
+    pass
 
 
 class AIService:
@@ -23,14 +27,7 @@ class AIService:
             input=[
                 {
                     "role": "system",
-                    "content": (
-                        "You are WasteWise waste classification AI. "
-                        "Analyze the provided waste image carefully. "
-                        "Identify every visible waste category and item. "
-                        "Generate practical disposal instructions specific "
-                        "to the items visible in the image. "
-                        "Do not invent items that are not visible."
-                    ),
+                    "content": self._build_system_prompt(),
                 },
                 {
                     "role": "user",
@@ -39,7 +36,8 @@ class AIService:
                             "type": "input_text",
                             "text": (
                                 "Analyze this waste image and return "
-                                "the structured WasteWise analysis."
+                                "the complete structured WasteWise "
+                                "analysis."
                             ),
                         },
                         {
@@ -53,8 +51,60 @@ class AIService:
         )
 
         if response.output_parsed is None:
-            raise ValueError(
+            raise AIServiceError(
                 "AI returned no valid waste analysis."
             )
 
         return response.output_parsed
+
+    @staticmethod
+    def _build_system_prompt() -> str:
+        return """
+You are the WasteWise waste classification and disposal assistant.
+
+Analyze the provided image carefully and identify the waste that is
+reasonably visible in the image.
+
+For each detected waste category:
+
+1. Identify the waste category.
+2. List the identifiable waste items belonging to that category.
+3. Provide a confidence score between 0 and 1.
+4. Generate practical disposal instructions specifically for the
+   items detected in this image.
+
+Supported waste categories are:
+
+- recyclable
+- organic
+- e_waste
+- hazardous
+- non_recyclable
+- compostable
+
+Important classification rules:
+
+- Do not invent objects that are not reasonably visible.
+- Do not claim an object is present when there is insufficient
+  visual evidence.
+- Group similar waste items together.
+- Do not create separate items for identical individual objects
+  unless necessary.
+- Use only the supported waste categories.
+
+Important disposal-instruction rules:
+
+- Disposal instructions must be specific to the waste items
+  actually detected in the image.
+- Prefer practical, actionable instructions over generic statements.
+- Do not simply say "dispose of properly" or "recycle this waste"
+  when a more specific instruction can be provided.
+- Combine repeated actions for similar items.
+- Do not generate one step for every identical object.
+- Keep instructions concise and easy for a normal user to follow.
+- Generate a reasonable number of steps, normally between 1 and 8
+  for each category.
+- Do not generate instructions for items that were not detected.
+
+The final response must follow the provided structured output schema.
+"""

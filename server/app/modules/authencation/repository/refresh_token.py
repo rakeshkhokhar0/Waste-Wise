@@ -4,8 +4,8 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.repository import BaseRepository
-from app.modules.authencation.models.refresh_token import RefreshToken
+from server.app.database.repository import BaseRepository
+from server.app.modules.authencation.models.refresh_token import RefreshToken
 
 
 class RefreshTokenReopsitory(BaseRepository[RefreshToken]):

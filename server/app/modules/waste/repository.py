@@ -8,7 +8,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.modules.waste.models import (
+from server.app.modules.waste.models import (
     DisposalStep,
     WasteAnalysis,
     WasteAnalysisStatus,
@@ -294,25 +294,6 @@ class WasteRepository:
         result = await self.session.execute(stmt)
 
         return list(result.scalars().all())
-
-    async def update_category_weight(
-        self,
-        category_result: WasteCategoryResult,
-        weight_kg: float,
-    ) -> WasteCategoryResult:
-        """
-        Update the user-entered weight for a waste category.
-        """
-
-        now = datetime.now()
-
-        category_result.weight_kg = weight_kg
-        category_result.weight_entered_at = now
-        category_result.updated_at = now
-
-        await self.session.flush()
-
-        return category_result
 
     async def delete_category(
         self,
@@ -788,82 +769,6 @@ class WasteRepository:
             .order_by(
                 func.count(
                     WasteCategoryResult.id
-                ).desc()
-            )
-        )
-
-        result = await self.session.execute(stmt)
-
-        return list(result.all())
-
-    # ========================================================
-    # CATEGORY WEIGHT STATISTICS
-    # ========================================================
-
-    async def get_category_weight_statistics(
-        self,
-        user_id: UUID,
-        *,
-        start_date: date | None = None,
-        end_date: date | None = None,
-    ) -> list[tuple[WasteCategory, float]]:
-        """
-        Get total recorded weight per waste category.
-
-        Example:
-
-            RECYCLABLE → 25.5 kg
-            ORGANIC    → 18.2 kg
-            E_WASTE    → 4.8 kg
-        """
-
-        conditions = [
-            WasteAnalysis.user_id == user_id,
-            WasteCategoryResult.weight_kg.is_not(None),
-        ]
-
-        if start_date is not None:
-            start_datetime = datetime.combine(
-                start_date,
-                time.min,
-            )
-
-            conditions.append(
-                WasteAnalysis.created_at >= start_datetime
-            )
-
-        if end_date is not None:
-            end_datetime = datetime.combine(
-                end_date + timedelta(days=1),
-                time.min,
-            )
-
-            conditions.append(
-                WasteAnalysis.created_at < end_datetime
-            )
-
-        stmt = (
-            select(
-                WasteCategoryResult.category,
-                func.coalesce(
-                    func.sum(
-                        WasteCategoryResult.weight_kg
-                    ),
-                    0,
-                ),
-            )
-            .join(
-                WasteAnalysis,
-                WasteAnalysis.id
-                == WasteCategoryResult.waste_analysis_id,
-            )
-            .where(*conditions)
-            .group_by(
-                WasteCategoryResult.category
-            )
-            .order_by(
-                func.sum(
-                    WasteCategoryResult.weight_kg
                 ).desc()
             )
         )

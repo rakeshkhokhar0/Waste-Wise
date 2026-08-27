@@ -5,7 +5,7 @@ from sqlalchemy import String,DateTime,Boolean,func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped,mapped_column,relationship
 
-from app.database.base import Base
+from server.app.database.base import Base
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -100,10 +100,10 @@ class User(Base):
         lazy="selectin"
     )
 
-    # waste_analyses: Mapped[list["WasteAnalysis"]] = relationship(
-    #     "WasteAnalysis",
-    #     back_populates="user",
-    #     cascade="all, delete-orphan",
-    # )
+    waste_analyses: Mapped[list["WasteAnalysis"]] = relationship(
+        "WasteAnalysis",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
 

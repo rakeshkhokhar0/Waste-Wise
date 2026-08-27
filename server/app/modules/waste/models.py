@@ -19,8 +19,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database.base import Base
-from app.modules.user.models.user_model import User
+from server.app.database.base import Base
+from server.app.modules.user.models.user_model import User
 
 
 # ============================================================
@@ -201,21 +201,6 @@ class WasteCategoryResult(Base):
     # Stored as DECIMAL to avoid floating-point precision issues.
     confidence: Mapped[float | None] = mapped_column(
         Numeric(5, 4),
-        nullable=True,
-    )
-
-    # User enters the combined weight of this category
-    # after separating the waste.
-    #
-    # Example:
-    # recyclable = 2.500 kg
-    weight_kg: Mapped[float | None] = mapped_column(
-        Numeric(10, 3),
-        nullable=True,
-    )
-
-    weight_entered_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
         nullable=True,
     )
 

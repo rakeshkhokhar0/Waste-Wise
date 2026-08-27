@@ -3,24 +3,24 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import emailsetting, resetpassword
-from app.core.security.jwt_service import JWTService
-from app.core.security.password_service import PasswordService
-from app.core.security.token_service import TokenService
-from app.core.service.email_service import EmailService
-from app.modules.authencation.models.email_verification import EmailVerification
-from app.modules.authencation.models.refresh_token import RefreshToken
-from app.modules.authencation.models.reset_password import ResetPassword
-from app.modules.authencation.repository.email_verification import (
+from server.app.core.config import emailsetting, resetpassword
+from server.app.core.security.jwt_service import JWTService
+from server.app.core.security.password_service import PasswordService
+from server.app.core.security.token_service import TokenService
+from server.app.core.service.email_service import EmailService
+from server.app.modules.authencation.models.email_verification import EmailVerification
+from server.app.modules.authencation.models.refresh_token import RefreshToken
+from server.app.modules.authencation.models.reset_password import ResetPassword
+from server.app.modules.authencation.repository.email_verification import (
     EmailVerificationReopsitory,
 )
-from app.modules.authencation.repository.refresh_token import (
+from server.app.modules.authencation.repository.refresh_token import (
     RefreshTokenReopsitory,
 )
-from app.modules.authencation.repository.reset_password import (
+from server.app.modules.authencation.repository.reset_password import (
     ResetPasswordReopsitory,
 )
-from app.modules.authencation.schemas import (
+from server.app.modules.authencation.schemas import (
     ChangePasswordRequest,
     ForgotPasswordRequest,
     LoginRequest,
@@ -31,9 +31,9 @@ from app.modules.authencation.schemas import (
     TokenRefreshRequest,
     TokenResponse,
 )
-from app.modules.user.models.user_model import User
-from app.modules.user.repository.user_repo import UserRepository
-from app.modules.user.services.account_service import AccountService
+from server.app.modules.user.models.user_model import User
+from server.app.modules.user.repository.user_repo import UserRepository
+from server.app.modules.user.services.account_service import AccountService
 
 
 class AuthServices:

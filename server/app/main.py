@@ -4,14 +4,14 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.router import api_router
-from app.core.config import appsetting
-from app.database.database import close_db, create_tables
+from server.app.api.router import api_router
+from server.app.core.config import appsetting
+from server.app.database.database import close_db, create_tables
 
-from app.modules.authencation.models.email_verification import EmailVerification
-from app.modules.authencation.models.refresh_token import RefreshToken
-from app.modules.authencation.models.reset_password import ResetPassword
-from app.modules.user.models.user_model import User
+from server.app.modules.authencation.models.email_verification import EmailVerification
+from server.app.modules.authencation.models.refresh_token import RefreshToken
+from server.app.modules.authencation.models.reset_password import ResetPassword
+from server.app.modules.user.models.user_model import User
 
 
 @asynccontextmanager

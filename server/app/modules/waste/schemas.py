@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.modules.waste.models import (
+from server.app.modules.waste.models import (
     WasteAnalysisStatus,
     WasteCategory,
 )
@@ -116,27 +116,6 @@ class DisposalStepResponse(BaseModel):
 
 
 # ============================================================
-# WEIGHT SCHEMAS
-# ============================================================
-
-
-class WasteWeightUpdate(BaseModel):
-    """
-    Request schema for submitting the weight of one waste
-    category.
-
-    Weight is always stored in kilograms.
-    """
-
-    weight_kg: float = Field(
-        ...,
-        gt=0,
-        le=100000,
-        description="Weight of the waste category in kilograms.",
-    )
-
-
-# ============================================================
 # CATEGORY RESULT SCHEMAS
 # ============================================================
 
@@ -148,7 +127,6 @@ class WasteCategoryResultResponse(BaseModel):
     Contains:
         - detected items
         - AI confidence
-        - user-entered weight
         - disposal steps
         - calculated disposal progress
     """
@@ -164,13 +142,6 @@ class WasteCategoryResultResponse(BaseModel):
         ge=0.0,
         le=1.0,
     )
-
-    weight_kg: float | None = Field(
-        default=None,
-        ge=0,
-    )
-
-    weight_entered_at: datetime | None = None
 
     disposal_steps: list[DisposalStepResponse] = Field(
         default_factory=list,
@@ -269,11 +240,6 @@ class WasteCategoryHistoryResponse(BaseModel):
     """
 
     category: WasteCategory
-
-    weight_kg: float | None = Field(
-        default=None,
-        ge=0,
-    )
 
 
 class WasteAnalysisListResponse(BaseModel):

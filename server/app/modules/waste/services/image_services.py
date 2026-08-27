@@ -7,7 +7,7 @@ import cloudinary
 import cloudinary.uploader
 from fastapi import UploadFile
 
-from app.core.config import cloudinarysetting
+from server.app.core.config import cloudinarysetting
 
 
 # ============================================================

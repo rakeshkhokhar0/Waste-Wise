@@ -111,3 +111,5 @@ class CloudinarySetting(BaseSettings):
         )
 
 cloudinarysetting = CloudinarySetting()
+
+

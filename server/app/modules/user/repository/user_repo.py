@@ -4,8 +4,8 @@ from uuid import UUID
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.repository import BaseRepository
-from app.modules.user.models.user_model import User
+from server.app.database.repository import BaseRepository
+from server.app.modules.user.models.user_model import User
 
 
 class UserRepository(BaseRepository[User]):
