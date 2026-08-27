@@ -1,5 +1,5 @@
-from server.app.core.config import jwtsetting
-from server.app.modules.authencation.schemas import TokenPayload
+from app.core.config import jwtsetting
+from app.modules.authencation.schemas import TokenPayload
 from datetime import datetime,timezone,timedelta
 
 import jwt

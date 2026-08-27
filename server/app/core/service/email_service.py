@@ -2,7 +2,7 @@ from email.message import EmailMessage
 
 import aiosmtplib
 
-from server.app.core.config import emailsetting
+from app.core.config import emailsetting
 
 class EmailService:
 

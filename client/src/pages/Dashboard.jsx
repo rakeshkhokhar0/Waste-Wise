@@ -87,25 +87,24 @@ const activity = [
   },
 ]
 
+const API_BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL ??
+  'http://localhost:8000/api/v1'
+).replace(/\/$/, '')
+
 function Dashboard({ onNavigate, onLogout }) {
   const inputRef = useRef(null)
 
   const [image, setImage] = useState(null)
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState('')
   const [rewardIndex, setRewardIndex] = useState(0)
-
-  // ==========================================
-  // LOGGED-IN USER
-  // ==========================================
 
   const username =
     window.localStorage.getItem('wastewise_username') || 'User'
 
   const usernameInitial =
     username.charAt(0).toUpperCase()
-
-  // ==========================================
-  // REWARD
-  // ==========================================
 
   const reward = rewards[rewardIndex]
   const RewardIcon = reward.icon
@@ -120,34 +119,140 @@ function Dashboard({ onNavigate, onLogout }) {
     0
   )
 
-  // ==========================================
-  // WASTE IMAGE SELECTION
-  // ==========================================
+  // ---------------------------------------------------------
+  // Compress image before temporarily storing it.
+  // This allows the next page to access the selected image.
+  // ---------------------------------------------------------
 
-  const selectImage = (event) => {
+  const prepareImage = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+
+      reader.onload = (event) => {
+        const img = new Image()
+
+        img.onload = () => {
+          const maxSize = 1200
+
+          let width = img.width
+          let height = img.height
+
+          if (width > maxSize || height > maxSize) {
+            if (width > height) {
+              height = Math.round(
+                (height * maxSize) / width
+              )
+              width = maxSize
+            } else {
+              width = Math.round(
+                (width * maxSize) / height
+              )
+              height = maxSize
+            }
+          }
+
+          const canvas = document.createElement('canvas')
+
+          canvas.width = width
+          canvas.height = height
+
+          const context = canvas.getContext('2d')
+
+          context.drawImage(
+            img,
+            0,
+            0,
+            width,
+            height
+          )
+
+          resolve(
+            canvas.toDataURL('image/jpeg', 0.8)
+          )
+        }
+
+        img.onerror = () => {
+          reject(
+            new Error('Unable to process the selected image.')
+          )
+        }
+
+        img.src = event.target.result
+      }
+
+      reader.onerror = () => {
+        reject(
+          new Error('Unable to read the selected image.')
+        )
+      }
+
+      reader.readAsDataURL(file)
+    })
+  }
+
+  // ---------------------------------------------------------
+  // SELECT IMAGE
+  // ---------------------------------------------------------
+
+  const selectImage = async (event) => {
     const file = event.target.files?.[0]
 
-    if (file) {
-      const imageUrl = URL.createObjectURL(file)
+    if (!file) {
+      return
+    }
 
-      setImage(imageUrl)
+    setUploadError('')
 
+    if (!file.type.startsWith('image/')) {
+      setUploadError('Please select a valid image.')
+      return
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      setUploadError('Image size cannot exceed 10 MB.')
+      return
+    }
+
+    try {
+      setUploading(true)
+
+      const imageData = await prepareImage(file)
+
+      setImage(imageData)
+
+      // Store image temporarily for WasteClassification.
       sessionStorage.setItem(
         'wastewise_uploaded_image',
-        imageUrl
+        imageData
       )
 
+      // Remove old analysis.
+      sessionStorage.removeItem(
+        'wastewise_analysis'
+      )
+
+      // Go to AI analysis page.
       onNavigate('/waste-classification')
+    } catch (error) {
+      console.error(error)
+
+      setUploadError(
+        error.message ||
+        'Unable to process the selected image.'
+      )
+    } finally {
+      setUploading(false)
     }
   }
 
-  // ==========================================
+  // ---------------------------------------------------------
   // REWARD NAVIGATION
-  // ==========================================
+  // ---------------------------------------------------------
 
   const previousReward = () => {
     setRewardIndex(
-      (rewardIndex - 1 + rewards.length) % rewards.length
+      (rewardIndex - 1 + rewards.length) %
+        rewards.length
     )
   }
 
@@ -157,9 +262,9 @@ function Dashboard({ onNavigate, onLogout }) {
     )
   }
 
-  // ==========================================
+  // ---------------------------------------------------------
   // LOGOUT
-  // ==========================================
+  // ---------------------------------------------------------
 
   const handleLogout = () => {
     window.localStorage.removeItem(
@@ -174,6 +279,14 @@ function Dashboard({ onNavigate, onLogout }) {
       'wastewise_username'
     )
 
+    sessionStorage.removeItem(
+      'wastewise_uploaded_image'
+    )
+
+    sessionStorage.removeItem(
+      'wastewise_analysis'
+    )
+
     onLogout?.()
   }
 
@@ -186,8 +299,6 @@ function Dashboard({ onNavigate, onLogout }) {
 
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-5 px-6 py-4 lg:px-10">
 
-          {/* LOGO */}
-
           <button
             type="button"
             onClick={() => onNavigate('/dashboard')}
@@ -196,8 +307,6 @@ function Dashboard({ onNavigate, onLogout }) {
             <Leaf size={23} />
             WasteWise
           </button>
-
-          {/* NAVIGATION */}
 
           <nav className="hidden items-center gap-6 text-sm font-semibold text-slate-500 md:flex">
 
@@ -209,9 +318,7 @@ function Dashboard({ onNavigate, onLogout }) {
               Home
             </button>
 
-            <button
-              type="button"
-            >
+            <button type="button">
               My activity
             </button>
 
@@ -231,8 +338,6 @@ function Dashboard({ onNavigate, onLogout }) {
 
           </nav>
 
-          {/* USER ACTIONS */}
-
           <div className="flex items-center gap-3">
 
             <button
@@ -241,8 +346,6 @@ function Dashboard({ onNavigate, onLogout }) {
             >
               <Bell size={20} />
             </button>
-
-            {/* USER PROFILE */}
 
             <div className="flex items-center gap-2 rounded-full bg-green-50 py-1.5 pl-1.5 pr-3">
 
@@ -255,8 +358,6 @@ function Dashboard({ onNavigate, onLogout }) {
               </span>
 
             </div>
-
-            {/* LOGOUT */}
 
             <button
               type="button"
@@ -276,7 +377,7 @@ function Dashboard({ onNavigate, onLogout }) {
 
       </header>
 
-      {/* MAIN CONTENT */}
+      {/* MAIN */}
 
       <div className="mx-auto max-w-7xl px-6 py-10 lg:px-10">
 
@@ -298,7 +399,7 @@ function Dashboard({ onNavigate, onLogout }) {
 
         </section>
 
-        {/* WASTE UPLOAD */}
+        {/* UPLOAD */}
 
         <section className="mt-9 overflow-hidden rounded-3xl bg-gradient-to-br from-green-800 to-emerald-600 p-7 text-white shadow-xl shadow-green-950/10 lg:p-10">
 
@@ -311,7 +412,7 @@ function Dashboard({ onNavigate, onLogout }) {
               </span>
 
               <p className="mt-6 text-xs font-bold tracking-[0.18em] text-green-100">
-                SMART WASTE IDENTIFICATION
+                AI WASTE IDENTIFICATION
               </p>
 
               <h2 className="mt-3 text-3xl font-bold leading-tight">
@@ -321,28 +422,34 @@ function Dashboard({ onNavigate, onLogout }) {
               </h2>
 
               <p className="mt-4 max-w-xl leading-relaxed text-green-50">
-                Upload a photo or click a picture of your waste.
-                WasteWise will help identify it and recommend the
-                right way to dispose of it.
+                Upload a photo and WasteWise AI will identify
+                the actual waste items, classify them, and create
+                personalized disposal recommendations.
               </p>
 
               <div className="mt-6 flex flex-wrap gap-3">
 
                 <button
                   type="button"
+                  disabled={uploading}
                   onClick={() => inputRef.current?.click()}
-                  className="flex items-center gap-2 rounded-xl bg-white px-5 py-3 font-semibold text-green-800 transition hover:bg-green-50"
+                  className="flex items-center gap-2 rounded-xl bg-white px-5 py-3 font-semibold text-green-800 transition hover:bg-green-50 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Camera size={18} />
-                  Click photo
+
+                  {uploading
+                    ? 'Preparing...'
+                    : 'Click photo'}
                 </button>
 
                 <button
                   type="button"
+                  disabled={uploading}
                   onClick={() => inputRef.current?.click()}
-                  className="flex items-center gap-2 rounded-xl border border-white/30 px-5 py-3 font-semibold transition hover:bg-white/10"
+                  className="flex items-center gap-2 rounded-xl border border-white/30 px-5 py-3 font-semibold transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <ImageUp size={18} />
+
                   Upload photo
                 </button>
 
@@ -355,6 +462,12 @@ function Dashboard({ onNavigate, onLogout }) {
                 />
 
               </div>
+
+              {uploadError && (
+                <div className="mt-4 rounded-xl bg-red-500/15 px-4 py-3 text-sm text-red-100">
+                  {uploadError}
+                </div>
+              )}
 
               <p className="mt-4 text-xs text-green-100">
                 JPG, PNG or WEBP. Maximum 10 MB.
@@ -404,7 +517,7 @@ function Dashboard({ onNavigate, onLogout }) {
 
         </section>
 
-        {/* REWARDS CAROUSEL */}
+        {/* REWARDS */}
 
         <section className="mt-7 overflow-hidden rounded-2xl border border-amber-100 bg-[#fffaf0] p-5 shadow-sm sm:p-7">
 
@@ -446,8 +559,6 @@ function Dashboard({ onNavigate, onLogout }) {
                   {reward.partner}
                 </p>
 
-                {/* POINTS */}
-
                 <div className="mt-4">
 
                   <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold">
@@ -476,8 +587,6 @@ function Dashboard({ onNavigate, onLogout }) {
                   </div>
 
                 </div>
-
-                {/* EXPIRY */}
 
                 <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
 
@@ -515,8 +624,6 @@ function Dashboard({ onNavigate, onLogout }) {
 
           </div>
 
-          {/* MOBILE VIEW REWARD BUTTON */}
-
           <button
             type="button"
             onClick={() => onNavigate('/rewards')}
@@ -524,8 +631,6 @@ function Dashboard({ onNavigate, onLogout }) {
           >
             View Reward
           </button>
-
-          {/* CAROUSEL INDICATORS */}
 
           <div className="mt-5 flex justify-center gap-2">
 
@@ -649,7 +754,7 @@ function Dashboard({ onNavigate, onLogout }) {
 
         </section>
 
-        {/* RECENT ACTIVITY */}
+        {/* ACTIVITY */}
 
         <section className="mt-10 pb-10">
 
@@ -666,14 +771,6 @@ function Dashboard({ onNavigate, onLogout }) {
               </h2>
 
             </div>
-
-            <button
-              type="button"
-              className="hidden items-center gap-1 text-sm font-semibold text-green-700 sm:flex"
-            >
-              View history
-              <ChevronRight size={16} />
-            </button>
 
           </div>
 

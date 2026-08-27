@@ -2,8 +2,8 @@ from datetime import datetime,timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.app.modules.authencation.models.reset_password import ResetPassword
-from server.app.database.repository import BaseRepository
+from app.modules.authencation.models.reset_password import ResetPassword
+from app.database.repository import BaseRepository
 
 class ResetPasswordReopsitory(BaseRepository[ResetPassword]):
     def __init__(self, session:AsyncSession):

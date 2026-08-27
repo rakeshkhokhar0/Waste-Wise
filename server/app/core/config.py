@@ -77,6 +77,17 @@ class EmailSetting(BaseSettings):
 emailsetting = EmailSetting()
 
 
+class OpenAISetting(BaseSettings):
+    OPENAI_API_KEY: str
+    OPENAI_MODEL: str = "gpt-5.6-luna"
+
+    model_config = SettingsConfigDict(
+        env_file=ENV_FILE,
+        extra="ignore",
+    )
+
+
+openaisettting = OpenAISetting()
 
 class ResetPasswordSetting(BaseSettings):
     #password reset

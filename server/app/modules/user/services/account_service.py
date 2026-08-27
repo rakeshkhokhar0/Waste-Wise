@@ -1,12 +1,12 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.app.core.security.password_service import PasswordService
-from server.app.modules.authencation.repository.refresh_token import (
+from app.core.security.password_service import PasswordService
+from app.modules.authencation.repository.refresh_token import (
     RefreshTokenReopsitory,
 )
-from server.app.modules.user.schemas import DeleteAccount
-from server.app.modules.user.models.user_model import User
-from server.app.modules.user.repository.user_repo import UserRepository
+from app.modules.user.schemas import DeleteAccount
+from app.modules.user.models.user_model import User
+from app.modules.user.repository.user_repo import UserRepository
 
 
 class AccountService:

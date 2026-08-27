@@ -3,8 +3,8 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.app.database.repository import BaseRepository
-from server.app.modules.authencation.models.email_verification import EmailVerification
+from app.database.repository import BaseRepository
+from app.modules.authencation.models.email_verification import EmailVerification
 
 
 class EmailVerificationReopsitory(BaseRepository[EmailVerification]):

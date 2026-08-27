@@ -4,8 +4,8 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.app.modules.waste.models import DisposalStep
-from server.app.modules.waste.repository import WasteRepository
+from app.modules.waste.models import DisposalStep
+from app.modules.waste.repository import WasteRepository
 
 
 class DisposalService:

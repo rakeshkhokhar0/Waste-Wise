@@ -2,19 +2,19 @@
 from fastapi import APIRouter,Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.app.modules.authencation.repository.refresh_token import RefreshTokenReopsitory
-from server.app.modules.authencation.repository.email_verification import EmailVerificationReopsitory
-from server.app.modules.authencation.repository.reset_password import ResetPasswordReopsitory
-from server.app.modules.user.repository.user_repo import UserRepository
+from app.modules.authencation.repository.refresh_token import RefreshTokenReopsitory
+from app.modules.authencation.repository.email_verification import EmailVerificationReopsitory
+from app.modules.authencation.repository.reset_password import ResetPasswordReopsitory
+from app.modules.user.repository.user_repo import UserRepository
 
-from server.app.database.database import get_db
+from app.database.database import get_db
 
-from server.app.modules.authencation.services.auth_services import AuthServices
+from app.modules.authencation.services.auth_services import AuthServices
 
-from server.app.modules.authencation.schemas import MessageResponse,RegisterRequest,TokenResponse,LoginRequest,TokenRefreshRequest,ForgotPasswordRequest,ResetPasswordRequest,ChangePasswordRequest,ResendEmailVerificationRequest
+from app.modules.authencation.schemas import MessageResponse,RegisterRequest,TokenResponse,LoginRequest,TokenRefreshRequest,ForgotPasswordRequest,ResetPasswordRequest,ChangePasswordRequest,ResendEmailVerificationRequest
 
-from server.app.core.dependencies import get_current_user
-from server.app.modules.user.models.user_model import User
+from app.core.dependencies import get_current_user
+from app.modules.user.models.user_model import User
 
 router = APIRouter(
     prefix="/auth",

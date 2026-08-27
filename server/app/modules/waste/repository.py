@@ -8,7 +8,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from server.app.modules.waste.models import (
+from app.modules.waste.models import (
     DisposalStep,
     WasteAnalysis,
     WasteAnalysisStatus,

@@ -6,10 +6,10 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped,mapped_column,relationship
 from typing import TYPE_CHECKING
 
-from server.app.database.base import Base
+from app.database.base import Base
 
 if TYPE_CHECKING:
-    from server.app.modules.user.models.user_model import User
+    from app.modules.user.models.user_model import User
 
 
 
