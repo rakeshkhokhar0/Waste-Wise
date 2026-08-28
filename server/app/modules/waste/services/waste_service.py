@@ -1,4 +1,4 @@
-# app/modules/waste/services/waste_service.py
+# server/app/modules/waste/services/waste_service.py
 
 from datetime import date
 from uuid import UUID
@@ -7,34 +7,41 @@ from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.app.modules.waste.models import (
+    RewardTransactionType,
     WasteAnalysis,
     WasteAnalysisStatus,
 )
 from server.app.modules.waste.repository import WasteRepository
-from server.app.modules.waste.schemas import (
-    AIWasteAnalysis,
-)
+from server.app.modules.waste.schemas import AIWasteAnalysis
 from server.app.modules.waste.services.ai_service import AIService
-from server.app.modules.waste.services.disposal_services import DisposalService
+from server.app.modules.waste.services.disposal_services import (
+    DisposalService,
+)
 from server.app.modules.waste.services.image_services import (
     ImageService,
 )
 
 
+# ============================================================
+# EXCEPTIONS
+# ============================================================
+
+
 class WasteServiceError(Exception):
-    """
-    Base exception for WasteService.
-    """
+    """Base exception for WasteService."""
 
     pass
 
 
 class WasteAnalysisError(WasteServiceError):
-    """
-    Raised when waste image analysis fails.
-    """
+    """Raised when waste image analysis fails."""
 
     pass
+
+
+# ============================================================
+# WASTE SERVICE
+# ============================================================
 
 
 class WasteService:
@@ -48,12 +55,16 @@ class WasteService:
         - Store AI-detected categories
         - Store AI-generated disposal steps
         - Fetch complete analysis
-        - Update disposal-step completion
-        - Calculate analysis progress
+        - Complete disposal steps
+        - Award reward points
+        - Calculate disposal progress
+        - Mark analysis completed
+        - Award final completion bonus
         - Fetch waste history
         - Delete waste analysis
 
-    The service owns the transaction for complete workflows.
+    Transaction ownership belongs to this service.
+    Repository methods do not commit.
     """
 
     def __init__(
@@ -88,80 +99,108 @@ class WasteService:
                 ↓
             Cloudinary
                 ↓
-            AI analysis - ONE API CALL
+            AI analysis
                 ↓
             Create WasteAnalysis
                 ↓
-            Create category results
+            Create categories
                 ↓
             Create disposal steps
                 ↓
-            Commit transaction
-
-        If any database operation fails, the entire database
-        transaction is rolled back.
-
-        Note:
-            Cloudinary is external to the database transaction.
-            For the MVP, uploaded images are not deleted if a
-            later operation fails.
+            Commit
         """
 
         try:
             # ------------------------------------------------
-            # 1. Upload image to Cloudinary
+            # 1. Validate uploaded file
             # ------------------------------------------------
 
-            uploaded_image = (
-                await self.image_service.upload_image(
-                    file=image,
+            if image is None:
+                raise WasteAnalysisError(
+                    "Waste image is required."
                 )
+
+            if not image.filename:
+                raise WasteAnalysisError(
+                    "Uploaded image has no filename."
+                )
+
+            # ------------------------------------------------
+            # 2. Upload image
+            # ------------------------------------------------
+
+            uploaded_image = await self.image_service.upload_image(
+                file=image,
+            )
+
+            if uploaded_image is None:
+                raise WasteAnalysisError(
+                    "Image upload returned no result."
+                )
+
+            # ImageService normally returns an object containing
+            # the uploaded image URL.
+            image_url = getattr(
+                uploaded_image,
+                "url",
+                None,
+            )
+
+            if not image_url:
+                raise WasteAnalysisError(
+                    "Image upload did not return a valid URL."
+                )
+
+            # ------------------------------------------------
+            # 3. Analyze image using AI
+            # ------------------------------------------------
+
+            ai_result = await self.ai_service.analyze_image(
+                image_url=image_url,
             )
 
             # ------------------------------------------------
-            # 2. Analyze image using AI
-            #
-            # ONE AI CALL returns:
-            #   - summary
-            #   - categories
-            #   - items
-            #   - confidence
-            #   - disposal_steps
-            # ------------------------------------------------
-
-            ai_result = (
-                await self.ai_service.analyze_image(
-                    image_url=uploaded_image.url,
-                )
-            )
-
-            # ------------------------------------------------
-            # 3. Validate AI result
+            # 4. Validate AI result
             # ------------------------------------------------
 
             self._validate_ai_result(ai_result)
 
             # ------------------------------------------------
-            # 4. Create main waste analysis
+            # 5. Create analysis
             # ------------------------------------------------
 
-            analysis = (
-                await self.waste_repository.create_analysis(
-                    user_id=user_id,
-                    image_url=uploaded_image.url,
-                    status=WasteAnalysisStatus.IN_PROGRESS,
-                )
+            analysis = await self.waste_repository.create_analysis(
+                user_id=user_id,
+                image_url=image_url,
+                status=WasteAnalysisStatus.IN_PROGRESS,
             )
 
+            if analysis is None:
+                raise WasteAnalysisError(
+                    "Failed to create waste analysis."
+                )
+
             # ------------------------------------------------
-            # 5. Create categories and disposal steps
+            # 6. Store AI summary
+            # ------------------------------------------------
+
+            summary = getattr(
+                ai_result,
+                "summary",
+                None,
+            )
+
+            if summary:
+                await self.waste_repository.update_analysis(
+                    analysis,
+                    ai_summary=summary,
+                )
+
+            # ------------------------------------------------
+            # 7. Create categories and disposal steps
             # ------------------------------------------------
 
             for category in ai_result.categories:
-
-                # --------------------------------------------
-                # Create category result
-                # --------------------------------------------
 
                 category_result = (
                     await self.waste_repository.create_category_result(
@@ -172,9 +211,10 @@ class WasteService:
                     )
                 )
 
-                # --------------------------------------------
-                # Create AI-generated disposal steps
-                # --------------------------------------------
+                if category_result is None:
+                    raise WasteAnalysisError(
+                        "Failed to create waste category."
+                    )
 
                 await self.disposal_service.create_steps_from_ai(
                     category_result_id=category_result.id,
@@ -182,59 +222,67 @@ class WasteService:
                 )
 
             # ------------------------------------------------
-            # 6. Commit complete transaction
+            # 8. Commit complete workflow
             # ------------------------------------------------
 
             await self.session.commit()
 
             # ------------------------------------------------
-            # 7. Return analysis
+            # 9. Return complete analysis
             # ------------------------------------------------
 
-            return analysis
+            complete_analysis = (
+                await self.waste_repository.get_analysis_with_details(
+                    analysis_id=analysis.id,
+                    user_id=user_id,
+                )
+            )
+
+            if complete_analysis is None:
+                raise WasteAnalysisError(
+                    "Waste analysis was created but could "
+                    "not be retrieved."
+                )
+
+            return complete_analysis
+
+        except WasteAnalysisError:
+            await self.session.rollback()
+            raise
+
+        except WasteServiceError:
+            await self.session.rollback()
+            raise
 
         except Exception as exc:
-            # ------------------------------------------------
-            # Rollback all database operations
-            # ------------------------------------------------
-
             await self.session.rollback()
 
-            # Keep application-specific errors intact
-            if isinstance(exc, WasteServiceError):
-                raise
-
+            # Keep the actual error available for debugging.
             raise WasteAnalysisError(
-                "Failed to analyze waste image."
+                f"Failed to analyze waste image: {exc}"
             ) from exc
 
     # ========================================================
     # VALIDATE AI RESULT
     # ========================================================
 
+    @staticmethod
     def _validate_ai_result(
-        self,
         ai_result: AIWasteAnalysis,
     ) -> None:
         """
-        Perform service-level validation of the AI result.
-
-        Pydantic already handles schema validation. This method
-        handles validation related to our application workflow.
+        Validate the AI result before storing it.
         """
 
-        # ----------------------------------------------------
-        # Make sure categories exist
-        # ----------------------------------------------------
+        if ai_result is None:
+            raise WasteAnalysisError(
+                "AI analysis returned no result."
+            )
 
         if not ai_result.categories:
             raise WasteAnalysisError(
                 "No waste categories were detected in the image."
             )
-
-        # ----------------------------------------------------
-        # Make sure every category contains items
-        # ----------------------------------------------------
 
         for category in ai_result.categories:
 
@@ -243,15 +291,17 @@ class WasteService:
                     "AI returned a waste category without items."
                 )
 
-            # ------------------------------------------------
-            # Make sure every category has disposal steps
-            # ------------------------------------------------
-
             if not category.disposal_steps:
                 raise WasteAnalysisError(
                     "AI returned a waste category without "
                     "disposal steps."
                 )
+
+            if category.confidence is not None:
+                if not 0 <= category.confidence <= 1:
+                    raise WasteAnalysisError(
+                        "AI returned an invalid confidence score."
+                    )
 
     # ========================================================
     # GET COMPLETE ANALYSIS
@@ -262,17 +312,6 @@ class WasteService:
         analysis_id: UUID,
         user_id: UUID,
     ) -> WasteAnalysis:
-        """
-        Get one complete waste analysis.
-
-        The repository loads:
-
-            WasteAnalysis
-                ↓
-            Category Results
-                ↓
-            Disposal Steps
-        """
 
         try:
             analysis = (
@@ -292,9 +331,12 @@ class WasteService:
         except WasteServiceError:
             raise
 
-        except Exception:
+        except Exception as exc:
             await self.session.rollback()
-            raise
+
+            raise WasteServiceError(
+                f"Failed to fetch waste analysis: {exc}"
+            ) from exc
 
     # ========================================================
     # UPDATE DISPOSAL STEP
@@ -308,28 +350,10 @@ class WasteService:
         user_id: UUID,
         is_completed: bool,
     ) -> WasteAnalysis:
-        """
-        Update a disposal step and return the updated analysis.
-
-        Flow:
-
-            Validate ownership
-                ↓
-            Update step
-                ↓
-            Fetch all analysis steps
-                ↓
-            Calculate progress
-                ↓
-            If all steps completed:
-                analysis = COMPLETED
-                ↓
-            Commit
-        """
 
         try:
             # ------------------------------------------------
-            # 1. Get and validate step ownership
+            # 1. Validate disposal-step ownership
             # ------------------------------------------------
 
             step = (
@@ -347,22 +371,7 @@ class WasteService:
                 )
 
             # ------------------------------------------------
-            # 2. Update step completion
-            #
-            # IMPORTANT:
-            # We directly use repository here instead of
-            # DisposalService.update_step_completion() because
-            # that method commits standalone operations.
-            # This operation is part of a larger transaction.
-            # ------------------------------------------------
-
-            await self.waste_repository.update_step_completion(
-                step=step,
-                is_completed=is_completed,
-            )
-
-            # ------------------------------------------------
-            # 3. Get complete analysis
+            # 2. Get complete analysis
             # ------------------------------------------------
 
             analysis = (
@@ -378,30 +387,70 @@ class WasteService:
                 )
 
             # ------------------------------------------------
-            # 4. Collect all disposal steps
+            # 3. Remember previous state
             # ------------------------------------------------
 
-            all_steps = []
+            was_completed = bool(
+                step.is_completed
+            )
 
-            for category_result in analysis.category_results:
-                all_steps.extend(
-                    category_result.disposal_steps
+            # ------------------------------------------------
+            # 4. Update step
+            # ------------------------------------------------
+
+            await self.waste_repository.update_step_completion(
+                step=step,
+                is_completed=is_completed,
+            )
+
+            # ------------------------------------------------
+            # 5. Award reward only on False -> True
+            # ------------------------------------------------
+
+            if is_completed and not was_completed:
+                await self._award_step_reward(
+                    step=step,
+                    analysis=analysis,
                 )
 
             # ------------------------------------------------
-            # 5. Calculate overall progress
+            # 6. Reload analysis
+            # ------------------------------------------------
+
+            analysis = (
+                await self.waste_repository.get_analysis_with_details(
+                    analysis_id=analysis_id,
+                    user_id=user_id,
+                )
+            )
+
+            if analysis is None:
+                raise WasteServiceError(
+                    "Waste analysis not found."
+                )
+
+            # ------------------------------------------------
+            # 7. Get all disposal steps
+            # ------------------------------------------------
+
+            all_steps = self._get_all_steps(
+                analysis
+            )
+
+            # ------------------------------------------------
+            # 8. Calculate progress
             # ------------------------------------------------
 
             (
                 total_steps,
                 completed_steps,
-                progress_percentage,
+                _progress_percentage,
             ) = self.disposal_service.calculate_progress(
                 steps=all_steps,
             )
 
             # ------------------------------------------------
-            # 6. Update analysis status
+            # 9. Update analysis status
             # ------------------------------------------------
 
             if (
@@ -411,27 +460,21 @@ class WasteService:
                 analysis.status = (
                     WasteAnalysisStatus.COMPLETED
                 )
+
+                await self._award_final_completion_bonus(
+                    analysis=analysis,
+                )
+
             else:
                 analysis.status = (
                     WasteAnalysisStatus.IN_PROGRESS
                 )
 
             # ------------------------------------------------
-            # 7. Update timestamp
-            #
-            # We use the repository's update method for
-            # timestamp management. The model's updated_at
-            # can also be handled by SQLAlchemy on update,
-            # depending on your model configuration.
+            # 10. Commit
             # ------------------------------------------------
 
-            # Flush the status change before commit.
             await self.session.flush()
-
-            # ------------------------------------------------
-            # 8. Commit entire operation
-            # ------------------------------------------------
-
             await self.session.commit()
 
             return analysis
@@ -444,8 +487,222 @@ class WasteService:
             await self.session.rollback()
 
             raise WasteServiceError(
-                "Failed to update disposal step."
+                f"Failed to update disposal step: {exc}"
             ) from exc
+
+    # ========================================================
+    # AWARD STEP REWARD
+    # ========================================================
+
+    async def _award_step_reward(
+        self,
+        step,
+        analysis: WasteAnalysis,
+    ) -> None:
+
+        if step.reward_awarded:
+            return
+
+        existing_reward = (
+            await self.waste_repository.get_step_reward_transaction(
+                step_id=step.id,
+            )
+        )
+
+        if existing_reward is not None:
+            step.reward_awarded = True
+            await self.session.flush()
+            return
+
+        points = int(
+            step.reward_points or 0
+        )
+
+        if points <= 0:
+            raise WasteServiceError(
+                "Invalid reward points for disposal step."
+            )
+
+        await self.waste_repository.add_reward_points(
+            user_id=analysis.user_id,
+            points=points,
+            transaction_type=(
+                RewardTransactionType.STEP_COMPLETION
+            ),
+            description=(
+                f"Completed disposal step "
+                f"{step.step_number}: "
+                f"{step.instruction}"
+            ),
+            disposal_step_id=step.id,
+            waste_analysis_id=analysis.id,
+        )
+
+        step.reward_awarded = True
+
+        await self.session.flush()
+
+    # ========================================================
+    # AWARD FINAL COMPLETION BONUS
+    # ========================================================
+
+    async def _award_final_completion_bonus(
+        self,
+        analysis: WasteAnalysis,
+    ) -> None:
+
+        existing_reward = (
+            await self.waste_repository
+            .get_analysis_completion_reward(
+                analysis_id=analysis.id,
+            )
+        )
+
+        if existing_reward is not None:
+            return
+
+        bonus = int(
+            self.disposal_service.FINAL_COMPLETION_BONUS
+        )
+
+        if bonus <= 0:
+            raise WasteServiceError(
+                "Invalid final completion bonus."
+            )
+
+        await self.waste_repository.add_reward_points(
+            user_id=analysis.user_id,
+            points=bonus,
+            transaction_type=(
+                RewardTransactionType.ANALYSIS_COMPLETION
+            ),
+            description=(
+                "Completed all disposal steps "
+                "for a waste analysis."
+            ),
+            waste_analysis_id=analysis.id,
+        )
+
+        await self.session.flush()
+
+    # ========================================================
+    # GET ALL STEPS
+    # ========================================================
+
+    @staticmethod
+    def _get_all_steps(
+        analysis: WasteAnalysis,
+    ) -> list:
+
+        all_steps = []
+
+        for category_result in analysis.category_results:
+            all_steps.extend(
+                category_result.disposal_steps
+            )
+
+        return all_steps
+
+    # ========================================================
+    # GET PROGRESS
+    # ========================================================
+
+    def get_analysis_progress(
+        self,
+        analysis: WasteAnalysis,
+    ) -> dict:
+
+        all_steps = self._get_all_steps(
+            analysis
+        )
+
+        (
+            total_steps,
+            completed_steps,
+            progress_percentage,
+        ) = self.disposal_service.calculate_progress(
+            steps=all_steps,
+        )
+
+        return {
+            "total_steps": total_steps,
+            "completed_steps": completed_steps,
+            "remaining_steps": (
+                total_steps - completed_steps
+            ),
+            "progress_percentage": progress_percentage,
+            "completed": (
+                total_steps > 0
+                and completed_steps == total_steps
+            ),
+        }
+
+    # ========================================================
+    # GET REWARD INFORMATION
+    # ========================================================
+
+    def get_analysis_rewards(
+        self,
+        analysis: WasteAnalysis,
+    ) -> dict:
+
+        all_steps = self._get_all_steps(
+            analysis
+        )
+
+        possible_step_points = sum(
+            int(step.reward_points or 0)
+            for step in all_steps
+        )
+
+        earned_step_points = sum(
+            int(step.reward_points or 0)
+            for step in all_steps
+            if step.reward_awarded
+        )
+
+        final_bonus = int(
+            self.disposal_service.FINAL_COMPLETION_BONUS
+        )
+
+        final_bonus_earned = (
+            analysis.status
+            == WasteAnalysisStatus.COMPLETED
+        )
+
+        total_possible_points = (
+            possible_step_points + final_bonus
+        )
+
+        total_earned_points = (
+            earned_step_points
+            + (
+                final_bonus
+                if final_bonus_earned
+                else 0
+            )
+        )
+
+        return {
+            "possible_step_points": (
+                possible_step_points
+            ),
+            "earned_step_points": (
+                earned_step_points
+            ),
+            "final_completion_bonus": (
+                final_bonus
+            ),
+            "final_bonus_earned": (
+                final_bonus_earned
+            ),
+            "total_possible_points": (
+                total_possible_points
+            ),
+            "total_earned_points": (
+                total_earned_points
+            ),
+        }
 
     # ========================================================
     # GET HISTORY
@@ -462,78 +719,46 @@ class WasteService:
         page: int = 1,
         page_size: int = 20,
     ):
-        """
-        Get paginated waste-analysis history.
 
-        Supported filters:
-
-            - category
-            - status
-            - start_date
-            - end_date
-            - page
-            - page_size
-
-        Example:
-
-            get_history(
-                user_id=user_id,
-                category=WasteCategory.RECYCLABLE,
+        if page < 1:
+            raise ValueError(
+                "Page must be greater than or equal to 1."
             )
-        """
+
+        if page_size < 1 or page_size > 100:
+            raise ValueError(
+                "Page size must be between 1 and 100."
+            )
+
+        if (
+            start_date is not None
+            and end_date is not None
+            and start_date > end_date
+        ):
+            raise ValueError(
+                "Start date cannot be after end date."
+            )
 
         try:
-            # ------------------------------------------------
-            # Validate pagination
-            # ------------------------------------------------
-
-            if page < 1:
-                raise ValueError(
-                    "Page must be greater than or equal to 1."
-                )
-
-            if page_size < 1 or page_size > 100:
-                raise ValueError(
-                    "Page size must be between 1 and 100."
-                )
-
-            # ------------------------------------------------
-            # Validate date range
-            # ------------------------------------------------
-
-            if (
-                start_date is not None
-                and end_date is not None
-                and start_date > end_date
-            ):
-                raise ValueError(
-                    "Start date cannot be after end date."
-                )
-
-            # ------------------------------------------------
-            # Get history from repository
-            # ------------------------------------------------
-
-            analyses, total = (
-                await self.waste_repository.get_history(
-                    user_id=user_id,
-                    category=category,
-                    status=status,
-                    start_date=start_date,
-                    end_date=end_date,
-                    page=page,
-                    page_size=page_size,
-                )
+            return await self.waste_repository.get_history(
+                user_id=user_id,
+                category=category,
+                status=status,
+                start_date=start_date,
+                end_date=end_date,
+                page=page,
+                page_size=page_size,
             )
-
-            return analyses, total
 
         except ValueError:
             raise
 
-        except Exception:
+        except Exception as exc:
             await self.session.rollback()
-            raise
+
+            raise WasteServiceError(
+                f"Failed to fetch waste history: {exc}"
+            ) from exc
 
     # ========================================================
     # GET RECENT ANALYSES
@@ -544,16 +769,13 @@ class WasteService:
         user_id: UUID,
         limit: int = 5,
     ) -> list[WasteAnalysis]:
-        """
-        Get the user's most recent waste analyses.
-        """
+
+        if limit < 1 or limit > 50:
+            raise ValueError(
+                "Limit must be between 1 and 50."
+            )
 
         try:
-            if limit < 1 or limit > 50:
-                raise ValueError(
-                    "Limit must be between 1 and 50."
-                )
-
             return (
                 await self.waste_repository.get_recent_analyses(
                     user_id=user_id,
@@ -564,9 +786,12 @@ class WasteService:
         except ValueError:
             raise
 
-        except Exception:
+        except Exception as exc:
             await self.session.rollback()
-            raise
+
+            raise WasteServiceError(
+                f"Failed to fetch recent analyses: {exc}"
+            ) from exc
 
     # ========================================================
     # DELETE ANALYSIS
@@ -577,22 +802,8 @@ class WasteService:
         analysis_id: UUID,
         user_id: UUID,
     ) -> None:
-        """
-        Permanently delete a waste analysis.
-
-        Related category results and disposal steps are
-        removed through configured SQLAlchemy cascade
-        relationships.
-
-        NOTE:
-            The Cloudinary image is NOT deleted in the MVP.
-        """
 
         try:
-            # ------------------------------------------------
-            # Delete analysis
-            # ------------------------------------------------
-
             deleted = (
                 await self.waste_repository.delete_analysis(
                     analysis_id=analysis_id,
@@ -605,10 +816,6 @@ class WasteService:
                     "Waste analysis not found."
                 )
 
-            # ------------------------------------------------
-            # Commit
-            # ------------------------------------------------
-
             await self.session.commit()
 
         except WasteServiceError:
@@ -619,5 +826,5 @@ class WasteService:
             await self.session.rollback()
 
             raise WasteServiceError(
-                "Failed to delete waste analysis."
+                f"Failed to delete waste analysis: {exc}"
             ) from exc

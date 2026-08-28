@@ -1,3 +1,5 @@
+# server/app/modules/waste/services/ai_service.py
+
 from openai import AsyncOpenAI
 
 from server.app.core.config import openaisettting
@@ -13,6 +15,11 @@ class AIServiceError(Exception):
 class AIService:
 
     def __init__(self):
+        if not openaisettting.OPENAI_API_KEY:
+            raise AIServiceError(
+                "OPENAI_API_KEY is not configured."
+            )
+
         self.client = AsyncOpenAI(
             api_key=openaisettting.OPENAI_API_KEY
         )
@@ -22,40 +29,49 @@ class AIService:
         image_url: str,
     ) -> AIWasteAnalysis:
 
-        response = await self.client.responses.parse(
-            model=openaisettting.OPENAI_MODEL,
-            input=[
-                {
-                    "role": "system",
-                    "content": self._build_system_prompt(),
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": (
-                                "Analyze this waste image and return "
-                                "the complete structured WasteWise "
-                                "analysis."
-                            ),
-                        },
-                        {
-                            "type": "input_image",
-                            "image_url": image_url,
-                        },
-                    ],
-                },
-            ],
-            text_format=AIWasteAnalysis,
-        )
-
-        if response.output_parsed is None:
-            raise AIServiceError(
-                "AI returned no valid waste analysis."
+        try:
+            response = await self.client.responses.parse(
+                model=openaisettting.OPENAI_MODEL,
+                input=[
+                    {
+                        "role": "system",
+                        "content": self._build_system_prompt(),
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": (
+                                    "Analyze this waste image and return "
+                                    "the complete structured WasteWise "
+                                    "analysis."
+                                ),
+                            },
+                            {
+                                "type": "input_image",
+                                "image_url": image_url,
+                            },
+                        ],
+                    },
+                ],
+                text_format=AIWasteAnalysis,
             )
 
-        return response.output_parsed
+            if response.output_parsed is None:
+                raise AIServiceError(
+                    "AI returned no valid waste analysis."
+                )
+
+            return response.output_parsed
+
+        except AIServiceError:
+            raise
+
+        except Exception as exc:
+            raise AIServiceError(
+                f"AI image analysis failed: {exc}"
+            ) from exc
 
     @staticmethod
     def _build_system_prompt() -> str:

@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from server.app.modules.authencation.router import router as auth_router
 from server.app.modules.user.router import router as user_router
 from server.app.modules.waste.router import router as waste_router
+from server.app.modules.rewards.router import router as rewards_router
 
 
 api_router = APIRouter(
@@ -18,3 +19,6 @@ api_router.include_router(user_router)
 
 # Waste routes
 api_router.include_router(waste_router)
+
+# Rewards routes
+api_router.include_router(rewards_router)

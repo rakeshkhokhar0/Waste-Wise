@@ -1,4 +1,4 @@
-# app/modules/waste/models.py
+# server/app/modules/waste/models.py
 
 import enum
 import uuid
@@ -29,10 +29,6 @@ from server.app.modules.user.models.user_model import User
 
 
 class WasteAnalysisStatus(str, enum.Enum):
-    """
-    Represents the lifecycle of a waste analysis.
-    """
-
     PENDING = "pending"
     ANALYZING = "analyzing"
     ANALYZED = "analyzed"
@@ -42,10 +38,6 @@ class WasteAnalysisStatus(str, enum.Enum):
 
 
 class WasteCategory(str, enum.Enum):
-    """
-    Categories used for disposal and reward calculation.
-    """
-
     RECYCLABLE = "recyclable"
     ORGANIC = "organic"
     E_WASTE = "e_waste"
@@ -54,19 +46,25 @@ class WasteCategory(str, enum.Enum):
     COMPOSTABLE = "compostable"
 
 
+class RewardStepType(str, enum.Enum):
+    BASIC = "basic"
+    NORMAL = "normal"
+    IMPORTANT = "important"
+    COMPLEX = "complex"
+
+
+class RewardTransactionType(str, enum.Enum):
+    STEP_COMPLETION = "step_completion"
+    ANALYSIS_COMPLETION = "analysis_completion"
+    MARKETPLACE_REDEMPTION = "marketplace_redemption"
+
+
 # ============================================================
 # WASTE ANALYSIS
 # ============================================================
 
 
 class WasteAnalysis(Base):
-    """
-    Stores one complete waste-image analysis.
-
-    One user can have many analyses.
-    One analysis can contain multiple waste categories.
-    """
-
     __tablename__ = "waste_analyses"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -111,10 +109,6 @@ class WasteAnalysis(Base):
         nullable=False,
     )
 
-    # --------------------------------------------------------
-    # Relationships
-    # --------------------------------------------------------
-
     user: Mapped["User"] = relationship(
         "User",
         back_populates="waste_analyses",
@@ -126,6 +120,12 @@ class WasteAnalysis(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
         order_by="WasteCategoryResult.created_at",
+    )
+
+    reward_transactions: Mapped[list["RewardTransaction"]] = relationship(
+        "RewardTransaction",
+        back_populates="waste_analysis",
+        foreign_keys="RewardTransaction.waste_analysis_id",
     )
 
     __table_args__ = (
@@ -143,20 +143,6 @@ class WasteAnalysis(Base):
 
 
 class WasteCategoryResult(Base):
-    """
-    Represents one waste category detected inside an analysis.
-
-    Example:
-
-        Analysis #1
-            ├── RECYCLABLE
-            ├── ORGANIC
-            └── E_WASTE
-
-    The `items` field stores the individual objects detected
-    within that category.
-    """
-
     __tablename__ = "waste_category_results"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -179,26 +165,12 @@ class WasteCategoryResult(Base):
         index=True,
     )
 
-    # Example:
-    #
-    # [
-    #     "plastic bottle",
-    #     "newspaper",
-    #     "aluminium can"
-    # ]
-    #
     items: Mapped[list] = mapped_column(
         JSON,
         nullable=False,
         default=list,
     )
 
-    # AI confidence for this category result.
-    #
-    # Example:
-    # 0.96
-    #
-    # Stored as DECIMAL to avoid floating-point precision issues.
     confidence: Mapped[float | None] = mapped_column(
         Numeric(5, 4),
         nullable=True,
@@ -216,10 +188,6 @@ class WasteCategoryResult(Base):
         onupdate=func.now(),
         nullable=False,
     )
-
-    # --------------------------------------------------------
-    # Relationships
-    # --------------------------------------------------------
 
     waste_analysis: Mapped["WasteAnalysis"] = relationship(
         "WasteAnalysis",
@@ -249,17 +217,6 @@ class WasteCategoryResult(Base):
 
 
 class DisposalStep(Base):
-    """
-    Stores individual disposal instructions for a waste category.
-
-    Example:
-
-        RECYCLABLE
-            Step 1 -> Separate recyclable materials
-            Step 2 -> Clean recyclable containers
-            Step 3 -> Put them in recycling collection
-    """
-
     __tablename__ = "disposal_steps"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -297,6 +254,29 @@ class DisposalStep(Base):
         nullable=True,
     )
 
+    reward_step_type: Mapped[RewardStepType] = mapped_column(
+        SQLEnum(RewardStepType),
+        nullable=False,
+        default=RewardStepType.NORMAL,
+    )
+
+    reward_points: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=10,
+    )
+
+    reward_awarded: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+
+    reward_awarded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -310,13 +290,15 @@ class DisposalStep(Base):
         nullable=False,
     )
 
-    # --------------------------------------------------------
-    # Relationships
-    # --------------------------------------------------------
-
     waste_category_result: Mapped["WasteCategoryResult"] = relationship(
         "WasteCategoryResult",
         back_populates="disposal_steps",
+    )
+
+    reward_transactions: Mapped[list["RewardTransaction"]] = relationship(
+        "RewardTransaction",
+        back_populates="disposal_step",
+        foreign_keys="RewardTransaction.disposal_step_id",
     )
 
     __table_args__ = (
@@ -324,5 +306,181 @@ class DisposalStep(Base):
             "ix_disposal_steps_category_step",
             "waste_category_result_id",
             "step_number",
+        ),
+    )
+
+
+# ============================================================
+# REWARD WALLET
+# ============================================================
+
+
+class RewardWallet(Base):
+    __tablename__ = "reward_wallets"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+
+    total_earned_points: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
+
+    total_spent_points: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
+
+    balance_points: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    user: Mapped["User"] = relationship(
+        "User",
+        foreign_keys=[user_id],
+    )
+
+    transactions: Mapped[list["RewardTransaction"]] = relationship(
+        "RewardTransaction",
+        back_populates="wallet",
+        cascade="all, delete-orphan",
+    )
+
+
+# ============================================================
+# REWARD TRANSACTION
+# ============================================================
+
+
+class RewardTransaction(Base):
+    __tablename__ = "reward_transactions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+
+    wallet_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "reward_wallets.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "users.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    disposal_step_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "disposal_steps.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+
+    waste_analysis_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "waste_analyses.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+
+    transaction_type: Mapped[RewardTransactionType] = mapped_column(
+        SQLEnum(RewardTransactionType),
+        nullable=False,
+        index=True,
+    )
+
+    points: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+
+    description: Mapped[str] = mapped_column(
+        String(500),
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+
+    wallet: Mapped["RewardWallet"] = relationship(
+        "RewardWallet",
+        back_populates="transactions",
+    )
+
+    user: Mapped["User"] = relationship(
+        "User",
+        foreign_keys=[user_id],
+    )
+
+    disposal_step: Mapped["DisposalStep | None"] = relationship(
+        "DisposalStep",
+        back_populates="reward_transactions",
+        foreign_keys=[disposal_step_id],
+    )
+
+    waste_analysis: Mapped["WasteAnalysis | None"] = relationship(
+        "WasteAnalysis",
+        back_populates="reward_transactions",
+        foreign_keys=[waste_analysis_id],
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_reward_transactions_user_created",
+            "user_id",
+            "created_at",
+        ),
+        Index(
+            "ix_reward_transactions_step_type",
+            "disposal_step_id",
+            "transaction_type",
+        ),
+        Index(
+            "ix_reward_transactions_analysis_type",
+            "waste_analysis_id",
+            "transaction_type",
         ),
     )
