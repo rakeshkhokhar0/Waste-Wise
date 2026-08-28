@@ -1,5 +1,6 @@
 # Authentication API routes for WasteWise.
 from fastapi import APIRouter,Depends
+from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.app.modules.authencation.repository.refresh_token import RefreshTokenReopsitory
@@ -52,6 +53,18 @@ async def login(
     request : LoginRequest,
     service : AuthServices = Depends(get_auth_services)
 ):
+    return await service.login(request)
+
+@router.post("/token", response_model=TokenResponse)
+async def token(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    service: AuthServices = Depends(get_auth_services),
+):
+    request = LoginRequest(
+        identifier=form_data.username,
+        password=form_data.password,
+    )
+
     return await service.login(request)
 
 @router.post("/verify-email",response_model=MessageResponse)

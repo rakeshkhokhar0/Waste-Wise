@@ -1,4 +1,4 @@
-# server/app/modules/rewards/router.py
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,6 +7,7 @@ from server.app.core.dependencies import get_current_user
 from server.app.database.database import get_db
 from server.app.modules.rewards.repository import RewardRepository
 from server.app.modules.rewards.schemas import (
+    AnalysisRewardResponse,
     RewardHistoryResponse,
     RewardLeaderboardResponse,
     RewardStatsResponse,
@@ -164,6 +165,51 @@ async def get_my_reward_stats(
         return await reward_service.get_reward_stats(
             user_id=current_user.id,
         )
+
+    except RewardServiceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+
+
+# ============================================================
+# GET REWARDS FOR ONE ANALYSIS
+# ============================================================
+
+
+@router.get(
+    "/analysis/{analysis_id}",
+    response_model=AnalysisRewardResponse,
+)
+async def get_analysis_rewards(
+    analysis_id: UUID,
+    current_user: User = Depends(get_current_user),
+    reward_service: RewardService = Depends(get_reward_service),
+):
+    """
+    Get the complete reward breakdown for one waste analysis.
+
+    Returns:
+        - Analysis reward
+        - Step completion points
+        - Category completion bonus
+        - Analysis completion bonus
+        - Total points earned
+        - Reward transactions
+    """
+
+    try:
+        return await reward_service.get_analysis_rewards(
+            user_id=current_user.id,
+            analysis_id=analysis_id,
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
     except RewardServiceError as exc:
         raise HTTPException(

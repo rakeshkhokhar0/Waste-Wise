@@ -9,9 +9,12 @@ from server.app.modules.rewards.models import (
     RewardWallet,
 )
 
+from server.app.modules.user.models.user_model import User
+
 from server.app.modules.waste.models import (
     DisposalStep,
     WasteAnalysis,
+    WasteCategoryResult,
 )
 
 
@@ -21,18 +24,17 @@ class RewardRepository:
 
     Responsibilities:
         - Reward wallet operations
+        - Add/spend reward points
         - Reward transaction operations
         - Reward history
         - Reward summary
         - Reward statistics
         - Leaderboard
         - User rank
+        - Reward duplicate checks
         - Analysis reward information
 
-    Waste models are imported only because reward transactions
-    reference waste analyses and disposal steps.
-
-    This repository does not contain Waste business logic.
+    This repository does not contain reward business rules.
     This repository does not commit transactions.
     """
 
@@ -47,6 +49,9 @@ class RewardRepository:
         self,
         user_id: UUID,
     ) -> RewardWallet | None:
+        """
+        Get the reward wallet of a user.
+        """
 
         result = await self.session.execute(
             select(RewardWallet).where(
@@ -60,6 +65,9 @@ class RewardRepository:
         self,
         user_id: UUID,
     ) -> RewardWallet:
+        """
+        Create a reward wallet for a user.
+        """
 
         wallet = RewardWallet(
             user_id=user_id,
@@ -69,6 +77,7 @@ class RewardRepository:
         )
 
         self.session.add(wallet)
+
         await self.session.flush()
 
         return wallet
@@ -77,13 +86,20 @@ class RewardRepository:
         self,
         user_id: UUID,
     ) -> RewardWallet:
+        """
+        Get user's wallet or create one if it does not exist.
+        """
 
-        wallet = await self.get_reward_wallet(user_id)
+        wallet = await self.get_reward_wallet(
+            user_id=user_id,
+        )
 
         if wallet is not None:
             return wallet
 
-        return await self.create_reward_wallet(user_id)
+        return await self.create_reward_wallet(
+            user_id=user_id,
+        )
 
     # ========================================================
     # ADD REWARD POINTS
@@ -97,8 +113,13 @@ class RewardRepository:
         description: str,
         *,
         disposal_step_id: UUID | None = None,
+        waste_category_result_id: UUID | None = None,
         waste_analysis_id: UUID | None = None,
     ) -> RewardTransaction:
+        """
+        Add reward points to a user's wallet and create
+        a corresponding transaction.
+        """
 
         if points <= 0:
             raise ValueError(
@@ -106,7 +127,7 @@ class RewardRepository:
             )
 
         wallet = await self.get_or_create_reward_wallet(
-            user_id
+            user_id=user_id,
         )
 
         wallet.total_earned_points = (
@@ -121,6 +142,7 @@ class RewardRepository:
             wallet_id=wallet.id,
             user_id=user_id,
             disposal_step_id=disposal_step_id,
+            waste_category_result_id=waste_category_result_id,
             waste_analysis_id=waste_analysis_id,
             transaction_type=transaction_type,
             points=points,
@@ -128,6 +150,7 @@ class RewardRepository:
         )
 
         self.session.add(transaction)
+
         await self.session.flush()
 
         return transaction
@@ -142,21 +165,32 @@ class RewardRepository:
         points: int,
         description: str,
     ) -> RewardTransaction:
+        """
+        Spend reward points from a user's wallet.
+        """
 
         if points <= 0:
             raise ValueError(
                 "Points to spend must be greater than zero."
             )
 
-        wallet = await self.get_reward_wallet(user_id)
+        wallet = await self.get_reward_wallet(
+            user_id=user_id,
+        )
 
         if wallet is None:
-            raise ValueError("Reward wallet not found.")
+            raise ValueError(
+                "Reward wallet not found."
+            )
 
-        balance = int(wallet.balance_points or 0)
+        balance = int(
+            wallet.balance_points or 0
+        )
 
         if balance < points:
-            raise ValueError("Insufficient reward points.")
+            raise ValueError(
+                "Insufficient reward points."
+            )
 
         wallet.total_spent_points = (
             int(wallet.total_spent_points or 0) + points
@@ -175,6 +209,7 @@ class RewardRepository:
         )
 
         self.session.add(transaction)
+
         await self.session.flush()
 
         return transaction
@@ -187,13 +222,20 @@ class RewardRepository:
         self,
         user_id: UUID,
     ) -> int:
+        """
+        Get current available reward points.
+        """
 
-        wallet = await self.get_reward_wallet(user_id)
+        wallet = await self.get_reward_wallet(
+            user_id=user_id,
+        )
 
         if wallet is None:
             return 0
 
-        return int(wallet.balance_points or 0)
+        return int(
+            wallet.balance_points or 0
+        )
 
     # ========================================================
     # TRANSACTIONS
@@ -206,6 +248,9 @@ class RewardRepository:
         limit: int = 50,
         offset: int = 0,
     ) -> list[RewardTransaction]:
+        """
+        Get reward transactions for a user.
+        """
 
         if limit < 1:
             raise ValueError(
@@ -229,7 +274,9 @@ class RewardRepository:
             .limit(limit)
         )
 
-        return list(result.scalars().all())
+        return list(
+            result.scalars().all()
+        )
 
     async def get_reward_history(
         self,
@@ -238,6 +285,9 @@ class RewardRepository:
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[RewardTransaction], int]:
+        """
+        Get paginated reward transaction history.
+        """
 
         if page < 1:
             raise ValueError(
@@ -249,6 +299,10 @@ class RewardRepository:
                 "Page size must be between 1 and 100."
             )
 
+        # ----------------------------------------------------
+        # Total transaction count
+        # ----------------------------------------------------
+
         count_result = await self.session.execute(
             select(
                 func.count(RewardTransaction.id)
@@ -257,7 +311,13 @@ class RewardRepository:
             )
         )
 
-        total = int(count_result.scalar_one() or 0)
+        total = int(
+            count_result.scalar_one() or 0
+        )
+
+        # ----------------------------------------------------
+        # Paginated transactions
+        # ----------------------------------------------------
 
         offset = (page - 1) * page_size
 
@@ -273,7 +333,38 @@ class RewardRepository:
             .limit(page_size)
         )
 
-        return list(result.scalars().all()), total
+        transactions = list(
+            result.scalars().all()
+        )
+
+        return transactions, total
+
+    # ========================================================
+    # ANALYSIS REWARD CHECK
+    # ========================================================
+
+    async def get_analysis_reward_transaction(
+        self,
+        user_id: UUID,
+        analysis_id: UUID,
+    ) -> RewardTransaction | None:
+        """
+        Check whether the user has already received the
+        reward for successfully analyzing this image.
+        """
+
+        result = await self.session.execute(
+            select(RewardTransaction)
+            .where(
+                RewardTransaction.user_id == user_id,
+                RewardTransaction.waste_analysis_id == analysis_id,
+                RewardTransaction.transaction_type
+                == RewardTransactionType.ANALYSIS_REWARD,
+            )
+            .limit(1)
+        )
+
+        return result.scalar_one_or_none()
 
     # ========================================================
     # STEP REWARD CHECK
@@ -281,12 +372,18 @@ class RewardRepository:
 
     async def get_step_reward_transaction(
         self,
+        user_id: UUID,
         step_id: UUID,
     ) -> RewardTransaction | None:
+        """
+        Check whether the user has already received the
+        reward for completing this disposal step.
+        """
 
         result = await self.session.execute(
             select(RewardTransaction)
             .where(
+                RewardTransaction.user_id == user_id,
                 RewardTransaction.disposal_step_id == step_id,
                 RewardTransaction.transaction_type
                 == RewardTransactionType.STEP_COMPLETION,
@@ -297,19 +394,52 @@ class RewardRepository:
         return result.scalar_one_or_none()
 
     # ========================================================
-    # ANALYSIS COMPLETION REWARD CHECK
+    # CATEGORY REWARD CHECK
     # ========================================================
 
-    async def get_analysis_completion_reward(
+    async def get_category_completion_reward(
         self,
-        analysis_id: UUID,
+        user_id: UUID,
+        category_id: UUID,
     ) -> RewardTransaction | None:
+        """
+        Check whether the user has already received the
+        completion bonus for a category.
+        """
 
         result = await self.session.execute(
             select(RewardTransaction)
             .where(
-                RewardTransaction.waste_analysis_id
-                == analysis_id,
+                RewardTransaction.user_id == user_id,
+                RewardTransaction.waste_category_result_id
+                == category_id,
+                RewardTransaction.transaction_type
+                == RewardTransactionType.CATEGORY_COMPLETION,
+            )
+            .limit(1)
+        )
+
+        return result.scalar_one_or_none()
+
+    # ========================================================
+    # ANALYSIS COMPLETION BONUS CHECK
+    # ========================================================
+
+    async def get_analysis_completion_reward(
+        self,
+        user_id: UUID,
+        analysis_id: UUID,
+    ) -> RewardTransaction | None:
+        """
+        Check whether the user has already received the
+        final analysis completion bonus.
+        """
+
+        result = await self.session.execute(
+            select(RewardTransaction)
+            .where(
+                RewardTransaction.user_id == user_id,
+                RewardTransaction.waste_analysis_id == analysis_id,
                 RewardTransaction.transaction_type
                 == RewardTransactionType.ANALYSIS_COMPLETION,
             )
@@ -326,23 +456,29 @@ class RewardRepository:
         self,
         user_id: UUID,
     ) -> dict:
+        """
+        Get basic reward summary for a user.
+        """
 
-        wallet = await self.get_reward_wallet(user_id)
+        wallet = await self.get_reward_wallet(
+            user_id=user_id,
+        )
 
         if wallet is None:
             total_points = 0
             total_earned = 0
-            total_spent = 0
         else:
             total_points = int(
                 wallet.balance_points or 0
             )
+
             total_earned = int(
                 wallet.total_earned_points or 0
             )
-            total_spent = int(
-                wallet.total_spent_points or 0
-            )
+
+        # ----------------------------------------------------
+        # Transaction count
+        # ----------------------------------------------------
 
         transaction_count_result = await self.session.execute(
             select(
@@ -352,29 +488,15 @@ class RewardRepository:
             )
         )
 
-        transaction_count = int(
+        total_transactions = int(
             transaction_count_result.scalar_one() or 0
-        )
-
-        recent_result = await self.session.execute(
-            select(RewardTransaction)
-            .where(
-                RewardTransaction.user_id == user_id
-            )
-            .order_by(
-                RewardTransaction.created_at.desc()
-            )
-            .limit(5)
         )
 
         return {
             "user_id": user_id,
             "total_points": total_points,
             "total_earned": total_earned,
-            "total_transactions": transaction_count,
-            "recent_transactions": list(
-                recent_result.scalars().all()
-            ),
+            "total_transactions": total_transactions,
         }
 
     # ========================================================
@@ -385,8 +507,13 @@ class RewardRepository:
         self,
         user_id: UUID,
     ) -> dict:
+        """
+        Get detailed reward statistics for a user.
+        """
 
-        wallet = await self.get_reward_wallet(user_id)
+        wallet = await self.get_reward_wallet(
+            user_id=user_id,
+        )
 
         if wallet is None:
             total_earned = 0
@@ -396,17 +523,44 @@ class RewardRepository:
             total_earned = int(
                 wallet.total_earned_points or 0
             )
+
             total_spent = int(
                 wallet.total_spent_points or 0
             )
+
             balance = int(
                 wallet.balance_points or 0
             )
 
+        # ----------------------------------------------------
+        # Analysis reward points
+        # ----------------------------------------------------
+
+        analysis_reward_result = await self.session.execute(
+            select(
+                func.coalesce(
+                    func.sum(
+                        RewardTransaction.points
+                    ),
+                    0,
+                )
+            ).where(
+                RewardTransaction.user_id == user_id,
+                RewardTransaction.transaction_type
+                == RewardTransactionType.ANALYSIS_REWARD,
+            )
+        )
+
+        # ----------------------------------------------------
+        # Step completion points
+        # ----------------------------------------------------
+
         step_points_result = await self.session.execute(
             select(
                 func.coalesce(
-                    func.sum(RewardTransaction.points),
+                    func.sum(
+                        RewardTransaction.points
+                    ),
                     0,
                 )
             ).where(
@@ -416,10 +570,35 @@ class RewardRepository:
             )
         )
 
-        analysis_points_result = await self.session.execute(
+        # ----------------------------------------------------
+        # Category completion points
+        # ----------------------------------------------------
+
+        category_points_result = await self.session.execute(
             select(
                 func.coalesce(
-                    func.sum(RewardTransaction.points),
+                    func.sum(
+                        RewardTransaction.points
+                    ),
+                    0,
+                )
+            ).where(
+                RewardTransaction.user_id == user_id,
+                RewardTransaction.transaction_type
+                == RewardTransactionType.CATEGORY_COMPLETION,
+            )
+        )
+
+        # ----------------------------------------------------
+        # Analysis completion points
+        # ----------------------------------------------------
+
+        analysis_completion_result = await self.session.execute(
+            select(
+                func.coalesce(
+                    func.sum(
+                        RewardTransaction.points
+                    ),
                     0,
                 )
             ).where(
@@ -428,6 +607,10 @@ class RewardRepository:
                 == RewardTransactionType.ANALYSIS_COMPLETION,
             )
         )
+
+        # ----------------------------------------------------
+        # Completed disposal steps
+        # ----------------------------------------------------
 
         completed_steps_result = await self.session.execute(
             select(
@@ -443,6 +626,31 @@ class RewardRepository:
                 RewardTransaction.disposal_step_id.is_not(None),
             )
         )
+
+        # ----------------------------------------------------
+        # Completed categories
+        # ----------------------------------------------------
+
+        completed_categories_result = await self.session.execute(
+            select(
+                func.count(
+                    func.distinct(
+                        RewardTransaction.waste_category_result_id
+                    )
+                )
+            ).where(
+                RewardTransaction.user_id == user_id,
+                RewardTransaction.transaction_type
+                == RewardTransactionType.CATEGORY_COMPLETION,
+                RewardTransaction.waste_category_result_id.is_not(
+                    None
+                ),
+            )
+        )
+
+        # ----------------------------------------------------
+        # Completed analyses
+        # ----------------------------------------------------
 
         completed_analyses_result = await self.session.execute(
             select(
@@ -463,20 +671,47 @@ class RewardRepository:
             "user_id": user_id,
             "total_points": balance,
             "total_earned": total_earned,
+
+            "analysis_reward_points": max(
+                int(
+                    analysis_reward_result.scalar_one() or 0
+                ),
+                0,
+            ),
+
             "step_completion_points": max(
-                int(step_points_result.scalar_one() or 0),
+                int(
+                    step_points_result.scalar_one() or 0
+                ),
                 0,
             ),
+
+            "category_completion_points": max(
+                int(
+                    category_points_result.scalar_one() or 0
+                ),
+                0,
+            ),
+
             "analysis_completion_points": max(
-                int(analysis_points_result.scalar_one() or 0),
+                int(
+                    analysis_completion_result.scalar_one() or 0
+                ),
                 0,
             ),
+
             "total_completed_steps": int(
                 completed_steps_result.scalar_one() or 0
             ),
+
+            "completed_categories": int(
+                completed_categories_result.scalar_one() or 0
+            ),
+
             "completed_analyses": int(
                 completed_analyses_result.scalar_one() or 0
             ),
+
             "total_spent_points": total_spent,
         }
 
@@ -488,6 +723,9 @@ class RewardRepository:
         self,
         limit: int = 10,
     ) -> list[dict]:
+        """
+        Get users ranked by current reward balance.
+        """
 
         if limit < 1 or limit > 100:
             raise ValueError(
@@ -495,26 +733,34 @@ class RewardRepository:
             )
 
         result = await self.session.execute(
-            select(RewardWallet)
+            select(
+                RewardWallet,
+                User.user_name,
+            )
+            .join(
+                User,
+                User.id == RewardWallet.user_id,
+            )
             .order_by(
-                RewardWallet.balance_points.desc()
+                RewardWallet.balance_points.desc(),
+                RewardWallet.created_at.asc(),
             )
             .limit(limit)
         )
 
-        wallets = list(result.scalars().all())
+        rows = result.all()
 
         return [
             {
                 "rank": rank,
                 "user_id": wallet.user_id,
-                "user_name": str(wallet.user_id),
+                "user_name": user_name,
                 "total_points": int(
                     wallet.balance_points or 0
                 ),
             }
-            for rank, wallet in enumerate(
-                wallets,
+            for rank, (wallet, user_name) in enumerate(
+                rows,
                 start=1,
             )
         ]
@@ -527,8 +773,13 @@ class RewardRepository:
         self,
         user_id: UUID,
     ) -> dict | None:
+        """
+        Get the current leaderboard rank of a user.
+        """
 
-        wallet = await self.get_reward_wallet(user_id)
+        wallet = await self.get_reward_wallet(
+            user_id=user_id,
+        )
 
         if wallet is None:
             return None
@@ -546,14 +797,18 @@ class RewardRepository:
             )
         )
 
+        rank = int(
+            result.scalar_one() or 0
+        ) + 1
+
         return {
             "user_id": user_id,
-            "rank": int(result.scalar_one() or 0) + 1,
+            "rank": rank,
             "total_points": current_points,
         }
 
     # ========================================================
-    # REWARDS FOR ONE ANALYSIS
+    # ANALYSIS REWARDS
     # ========================================================
 
     async def get_analysis_rewards(
@@ -561,6 +816,13 @@ class RewardRepository:
         user_id: UUID,
         analysis_id: UUID,
     ) -> dict:
+        """
+        Get all rewards associated with one waste analysis.
+        """
+
+        # ----------------------------------------------------
+        # Verify analysis ownership
+        # ----------------------------------------------------
 
         analysis_result = await self.session.execute(
             select(WasteAnalysis).where(
@@ -569,15 +831,46 @@ class RewardRepository:
             )
         )
 
-        if analysis_result.scalar_one_or_none() is None:
+        analysis = (
+            analysis_result.scalar_one_or_none()
+        )
+
+        if analysis is None:
             raise ValueError(
                 "Waste analysis not found."
             )
 
-        step_result = await self.session.execute(
+        # ----------------------------------------------------
+        # Analysis reward
+        # ----------------------------------------------------
+
+        analysis_reward_result = await self.session.execute(
             select(
                 func.coalesce(
-                    func.sum(RewardTransaction.points),
+                    func.sum(
+                        RewardTransaction.points
+                    ),
+                    0,
+                )
+            ).where(
+                RewardTransaction.user_id == user_id,
+                RewardTransaction.waste_analysis_id
+                == analysis_id,
+                RewardTransaction.transaction_type
+                == RewardTransactionType.ANALYSIS_REWARD,
+            )
+        )
+
+        # ----------------------------------------------------
+        # Step points
+        # ----------------------------------------------------
+
+        step_points_result = await self.session.execute(
+            select(
+                func.coalesce(
+                    func.sum(
+                        RewardTransaction.points
+                    ),
                     0,
                 )
             ).where(
@@ -589,10 +882,37 @@ class RewardRepository:
             )
         )
 
+        # ----------------------------------------------------
+        # Category completion bonuses
+        # ----------------------------------------------------
+
+        category_bonus_result = await self.session.execute(
+            select(
+                func.coalesce(
+                    func.sum(
+                        RewardTransaction.points
+                    ),
+                    0,
+                )
+            ).where(
+                RewardTransaction.user_id == user_id,
+                RewardTransaction.waste_analysis_id
+                == analysis_id,
+                RewardTransaction.transaction_type
+                == RewardTransactionType.CATEGORY_COMPLETION,
+            )
+        )
+
+        # ----------------------------------------------------
+        # Final analysis completion bonus
+        # ----------------------------------------------------
+
         completion_result = await self.session.execute(
             select(
                 func.coalesce(
-                    func.sum(RewardTransaction.points),
+                    func.sum(
+                        RewardTransaction.points
+                    ),
                     0,
                 )
             ).where(
@@ -603,6 +923,10 @@ class RewardRepository:
                 == RewardTransactionType.ANALYSIS_COMPLETION,
             )
         )
+
+        # ----------------------------------------------------
+        # All transactions for this analysis
+        # ----------------------------------------------------
 
         transaction_result = await self.session.execute(
             select(RewardTransaction)
@@ -616,23 +940,46 @@ class RewardRepository:
             )
         )
 
+        analysis_reward = max(
+            int(
+                analysis_reward_result.scalar_one() or 0
+            ),
+            0,
+        )
+
         step_points = max(
-            int(step_result.scalar_one() or 0),
+            int(
+                step_points_result.scalar_one() or 0
+            ),
+            0,
+        )
+
+        category_bonus = max(
+            int(
+                category_bonus_result.scalar_one() or 0
+            ),
             0,
         )
 
         completion_bonus = max(
-            int(completion_result.scalar_one() or 0),
+            int(
+                completion_result.scalar_one() or 0
+            ),
             0,
         )
 
         return {
             "analysis_id": analysis_id,
             "user_id": user_id,
+            "analysis_reward": analysis_reward,
             "step_points": step_points,
+            "category_bonus": category_bonus,
             "completion_bonus": completion_bonus,
             "total_points": (
-                step_points + completion_bonus
+                analysis_reward
+                + step_points
+                + category_bonus
+                + completion_bonus
             ),
             "transactions": list(
                 transaction_result.scalars().all()

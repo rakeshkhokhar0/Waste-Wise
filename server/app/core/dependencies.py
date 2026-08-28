@@ -11,7 +11,7 @@ from server.app.modules.user.models.user_model import User
 from server.app.modules.user.repository.user_repo import UserRepository
 
 oauth2_scheme = OAuth2PasswordBearer(
-    tokenUrl="/api/v1/auth/login",
+    tokenUrl="/api/v1/auth/token",
 )
 
 async def get_current_user(

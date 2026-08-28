@@ -195,6 +195,13 @@ class WasteCategoryResult(Base):
         order_by="DisposalStep.step_number",
     )
 
+    reward_transactions: Mapped[
+        list["RewardTransaction"]
+    ] = relationship(
+        "RewardTransaction",
+        back_populates="waste_category_result",
+    )
+
     __table_args__ = (
         Index(
             "ix_category_results_analysis_category",

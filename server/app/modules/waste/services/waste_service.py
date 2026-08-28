@@ -1,12 +1,15 @@
-# server/app/modules/waste/services/waste_service.py
-
 from datetime import date
 from uuid import UUID
 
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.app.modules.rewards.service import (
+    RewardService,
+    RewardServiceError,
+)
 from server.app.modules.waste.models import (
+    DisposalStep,
     WasteAnalysis,
     WasteAnalysisStatus,
 )
@@ -53,16 +56,22 @@ class WasteService:
         - Create waste analysis
         - Store AI-detected categories
         - Store AI-generated disposal steps
-        - Fetch complete analysis
+        - Award analysis reward
         - Complete disposal steps
+        - Award step rewards
+        - Award category completion bonuses
+        - Award analysis completion bonus
         - Calculate disposal progress
         - Mark analysis completed
         - Fetch waste history
         - Delete waste analysis
 
-    Reward functionality is handled by the Rewards module.
-    This service contains no reward calculation, reward transaction,
-    wallet, or reward-awarding logic.
+    Reward calculation itself belongs to RewardService.
+
+    Transaction responsibility:
+        WasteService owns the transaction for Waste + Reward
+        operations. RewardService performs reward business
+        logic but does not commit or rollback.
     """
 
     def __init__(
@@ -72,12 +81,14 @@ class WasteService:
         image_service: ImageService,
         ai_service: AIService,
         disposal_service: DisposalService,
+        reward_service: RewardService,
     ):
         self.session = session
         self.waste_repository = waste_repository
         self.image_service = image_service
         self.ai_service = ai_service
         self.disposal_service = disposal_service
+        self.reward_service = reward_service
 
     # ========================================================
     # ANALYZE WASTE IMAGE
@@ -105,7 +116,11 @@ class WasteService:
                 ↓
             Create disposal steps
                 ↓
-            Commit
+            Award +20 analysis reward
+                ↓
+            ONE COMMIT
+                ↓
+            Return complete analysis
         """
 
         try:
@@ -127,8 +142,10 @@ class WasteService:
             # 2. Upload image
             # ------------------------------------------------
 
-            uploaded_image = await self.image_service.upload_image(
-                file=image,
+            uploaded_image = (
+                await self.image_service.upload_image(
+                    file=image,
+                )
             )
 
             if uploaded_image is None:
@@ -165,10 +182,12 @@ class WasteService:
             # 5. Create analysis
             # ------------------------------------------------
 
-            analysis = await self.waste_repository.create_analysis(
-                user_id=user_id,
-                image_url=image_url,
-                status=WasteAnalysisStatus.IN_PROGRESS,
+            analysis = await (
+                self.waste_repository.create_analysis(
+                    user_id=user_id,
+                    image_url=image_url,
+                    status=WasteAnalysisStatus.IN_PROGRESS,
+                )
             )
 
             if analysis is None:
@@ -198,8 +217,8 @@ class WasteService:
 
             for category in ai_result.categories:
 
-                category_result = (
-                    await self.waste_repository.create_category_result(
+                category_result = await (
+                    self.waste_repository.create_category_result(
                         waste_analysis_id=analysis.id,
                         category=category.category,
                         items=category.items,
@@ -212,23 +231,52 @@ class WasteService:
                         "Failed to create waste category."
                     )
 
-                await self.disposal_service.create_steps_from_ai(
-                    category_result_id=category_result.id,
-                    disposal_steps=category.disposal_steps,
+                await (
+                    self.disposal_service.create_steps_from_ai(
+                        category_result_id=category_result.id,
+                        disposal_steps=category.disposal_steps,
+                    )
                 )
 
             # ------------------------------------------------
-            # 8. Commit complete workflow
+            # 8. Award analysis reward
+            # ------------------------------------------------
+            #
+            # RewardService:
+            #   - verifies ownership
+            #   - checks duplicate
+            #   - updates wallet
+            #   - creates transaction
+            #   - flushes
+            #
+            # RewardService DOES NOT commit.
+            #
+            # Therefore all Waste + Reward changes remain
+            # inside the same transaction.
+
+            try:
+                await self.reward_service.award_analysis_reward(
+                    user_id=user_id,
+                    analysis_id=analysis.id,
+                )
+
+            except RewardServiceError as exc:
+                raise WasteAnalysisError(
+                    "Analysis reward could not be awarded."
+                ) from exc
+
+            # ------------------------------------------------
+            # 9. Commit entire operation
             # ------------------------------------------------
 
             await self.session.commit()
 
             # ------------------------------------------------
-            # 9. Return complete analysis
+            # 10. Get complete analysis
             # ------------------------------------------------
 
-            complete_analysis = (
-                await self.waste_repository.get_analysis_with_details(
+            complete_analysis = await (
+                self.waste_repository.get_analysis_with_details(
                     analysis_id=analysis.id,
                     user_id=user_id,
                 )
@@ -249,6 +297,13 @@ class WasteService:
         except WasteServiceError:
             await self.session.rollback()
             raise
+
+        except RewardServiceError as exc:
+            await self.session.rollback()
+
+            raise WasteAnalysisError(
+                "Failed to award analysis reward."
+            ) from exc
 
         except Exception as exc:
             await self.session.rollback()
@@ -309,8 +364,8 @@ class WasteService:
     ) -> WasteAnalysis:
 
         try:
-            analysis = (
-                await self.waste_repository.get_analysis_with_details(
+            analysis = await (
+                self.waste_repository.get_analysis_with_details(
                     analysis_id=analysis_id,
                     user_id=user_id,
                 )
@@ -327,8 +382,6 @@ class WasteService:
             raise
 
         except Exception as exc:
-            await self.session.rollback()
-
             raise WasteServiceError(
                 f"Failed to fetch waste analysis: {exc}"
             ) from exc
@@ -345,6 +398,31 @@ class WasteService:
         user_id: UUID,
         is_completed: bool,
     ) -> WasteAnalysis:
+        """
+        Update disposal-step completion and trigger rewards.
+
+        Reward rules:
+
+            False -> True
+                +10 Step completion reward
+
+                If all category steps are complete:
+                    +25 Category completion bonus
+
+                If all analysis steps are complete:
+                    +50 Analysis completion bonus
+
+            True -> False
+                No reward is removed.
+                No new reward is created.
+
+        Transaction:
+
+            All Waste and Reward changes are committed
+            together as ONE transaction.
+
+            If anything fails, everything is rolled back.
+        """
 
         try:
             # ------------------------------------------------
@@ -352,7 +430,8 @@ class WasteService:
             # ------------------------------------------------
 
             step = (
-                await self.waste_repository.get_disposal_step_by_id(
+                await self.waste_repository
+                .get_disposal_step_by_id(
                     step_id=step_id,
                     category_result_id=category_result_id,
                     analysis_id=analysis_id,
@@ -369,8 +448,8 @@ class WasteService:
             # 2. Get complete analysis
             # ------------------------------------------------
 
-            analysis = (
-                await self.waste_repository.get_analysis_with_details(
+            analysis = await (
+                self.waste_repository.get_analysis_with_details(
                     analysis_id=analysis_id,
                     user_id=user_id,
                 )
@@ -382,7 +461,15 @@ class WasteService:
                 )
 
             # ------------------------------------------------
-            # 3. Update step completion
+            # 3. Remember previous completion state
+            # ------------------------------------------------
+
+            was_completed = bool(
+                step.is_completed
+            )
+
+            # ------------------------------------------------
+            # 4. Update step
             # ------------------------------------------------
 
             await self.waste_repository.update_step_completion(
@@ -391,11 +478,73 @@ class WasteService:
             )
 
             # ------------------------------------------------
-            # 4. Reload analysis
+            # 5. Award rewards only for newly completed step
             # ------------------------------------------------
 
-            analysis = (
-                await self.waste_repository.get_analysis_with_details(
+            if (
+                is_completed
+                and not was_completed
+            ):
+
+                # --------------------------------------------
+                # 5A. Individual step reward
+                # --------------------------------------------
+
+                try:
+                    await self.reward_service.award_step_reward(
+                        user_id=user_id,
+                        step_id=step.id,
+                    )
+
+                except RewardServiceError as exc:
+                    raise WasteServiceError(
+                        "Step reward could not be awarded."
+                    ) from exc
+
+                # --------------------------------------------
+                # 5B. Category completion bonus
+                # --------------------------------------------
+
+                try:
+                    await (
+                        self.reward_service
+                        .award_category_completion_bonus(
+                            user_id=user_id,
+                            category_id=category_result_id,
+                        )
+                    )
+
+                except RewardServiceError as exc:
+                    raise WasteServiceError(
+                        "Category completion bonus "
+                        "could not be awarded."
+                    ) from exc
+
+                # --------------------------------------------
+                # 5C. Analysis completion bonus
+                # --------------------------------------------
+
+                try:
+                    await (
+                        self.reward_service
+                        .award_analysis_completion_bonus(
+                            user_id=user_id,
+                            analysis_id=analysis_id,
+                        )
+                    )
+
+                except RewardServiceError as exc:
+                    raise WasteServiceError(
+                        "Analysis completion bonus "
+                        "could not be awarded."
+                    ) from exc
+
+            # ------------------------------------------------
+            # 6. Reload analysis after step update
+            # ------------------------------------------------
+
+            analysis = await (
+                self.waste_repository.get_analysis_with_details(
                     analysis_id=analysis_id,
                     user_id=user_id,
                 )
@@ -407,7 +556,7 @@ class WasteService:
                 )
 
             # ------------------------------------------------
-            # 5. Get all disposal steps
+            # 7. Get all disposal steps
             # ------------------------------------------------
 
             all_steps = self._get_all_steps(
@@ -415,7 +564,7 @@ class WasteService:
             )
 
             # ------------------------------------------------
-            # 6. Calculate progress
+            # 8. Calculate progress
             # ------------------------------------------------
 
             (
@@ -427,7 +576,7 @@ class WasteService:
             )
 
             # ------------------------------------------------
-            # 7. Update analysis status
+            # 9. Update analysis status
             # ------------------------------------------------
 
             if (
@@ -443,17 +592,45 @@ class WasteService:
                 )
 
             # ------------------------------------------------
-            # 8. Commit
+            # 10. Flush analysis status
             # ------------------------------------------------
 
             await self.session.flush()
+
+            # ------------------------------------------------
+            # 11. Commit EVERYTHING once
+            # ------------------------------------------------
+            #
+            # This includes:
+            #
+            #   - Disposal step update
+            #   - Wallet update
+            #   - Step reward transaction
+            #   - Category bonus transaction
+            #   - Analysis bonus transaction
+            #   - Analysis status update
+            #
+            # If any previous operation failed, execution
+            # never reaches this point.
+
             await self.session.commit()
+
+            # ------------------------------------------------
+            # 12. Return updated analysis
+            # ------------------------------------------------
 
             return analysis
 
         except WasteServiceError:
             await self.session.rollback()
             raise
+
+        except RewardServiceError as exc:
+            await self.session.rollback()
+
+            raise WasteServiceError(
+                "Failed to process reward for disposal step."
+            ) from exc
 
         except Exception as exc:
             await self.session.rollback()
@@ -469,9 +646,9 @@ class WasteService:
     @staticmethod
     def _get_all_steps(
         analysis: WasteAnalysis,
-    ) -> list:
+    ) -> list[DisposalStep]:
 
-        all_steps = []
+        all_steps: list[DisposalStep] = []
 
         for category_result in analysis.category_results:
             all_steps.extend(
@@ -564,8 +741,6 @@ class WasteService:
             raise
 
         except Exception as exc:
-            await self.session.rollback()
-
             raise WasteServiceError(
                 f"Failed to fetch waste history: {exc}"
             ) from exc
@@ -586,8 +761,8 @@ class WasteService:
             )
 
         try:
-            return (
-                await self.waste_repository.get_recent_analyses(
+            return await (
+                self.waste_repository.get_recent_analyses(
                     user_id=user_id,
                     limit=limit,
                 )
@@ -597,8 +772,6 @@ class WasteService:
             raise
 
         except Exception as exc:
-            await self.session.rollback()
-
             raise WasteServiceError(
                 f"Failed to fetch recent analyses: {exc}"
             ) from exc
@@ -614,8 +787,8 @@ class WasteService:
     ) -> None:
 
         try:
-            deleted = (
-                await self.waste_repository.delete_analysis(
+            deleted = await (
+                self.waste_repository.delete_analysis(
                     analysis_id=analysis_id,
                     user_id=user_id,
                 )
