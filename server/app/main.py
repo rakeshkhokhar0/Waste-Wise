@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 
 from server.app.api.router import api_router
 from server.app.core.config import appsetting
-from server.app.database.database import close_db, create_tables
+from server.app.database.database import close_db
 
 from server.app.modules.authencation.models.email_verification import EmailVerification
 from server.app.modules.authencation.models.refresh_token import RefreshToken
@@ -16,7 +16,6 @@ from server.app.modules.user.models.user_model import User
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await create_tables()
     yield
     await close_db()
 

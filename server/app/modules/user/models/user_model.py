@@ -9,10 +9,10 @@ from server.app.database.base import Base
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from app.modules.authencation.models.email_verification import EmailVerification
-    from app.modules.authencation.models.refresh_token import RefreshToken
-    from app.modules.authencation.models.reset_password import ResetPassword
-    from app.modules.waste.models import WasteAnalysis
+    from server.app.modules.authencation.models.email_verification import EmailVerification
+    from server.app.modules.authencation.models.refresh_token import RefreshToken
+    from server.app.modules.authencation.models.reset_password import ResetPassword
+    from server.app.modules.waste.models import WasteAnalysis
 
 class User(Base):
     __tablename__="users"

@@ -1,1 +1,0 @@
-# Sustainability module for WasteWise.
