@@ -16,25 +16,19 @@ from server.app.core.config import cloudinarysetting
 
 
 class ImageServiceError(Exception):
-    """
-    Base exception for image-service related errors.
-    """
+    """Base exception for image-service related errors."""
 
     pass
 
 
 class InvalidImageError(ImageServiceError):
-    """
-    Raised when the uploaded image is invalid or unsupported.
-    """
+    """Raised when the uploaded image is invalid or unsupported."""
 
     pass
 
 
 class ImageUploadError(ImageServiceError):
-    """
-    Raised when the image upload to Cloudinary fails.
-    """
+    """Raised when the image upload to Cloudinary fails."""
 
     pass
 
@@ -46,9 +40,7 @@ class ImageUploadError(ImageServiceError):
 
 @dataclass
 class UploadedImage:
-    """
-    Information returned after a successful Cloudinary upload.
-    """
+    """Information returned after a successful Cloudinary upload."""
 
     url: str
     public_id: str
@@ -63,22 +55,9 @@ class ImageService:
     """
     Handles image validation and Cloudinary uploads.
 
-    Responsibilities:
-        - Validate uploaded image
-        - Validate image type
-        - Validate image size
-        - Upload image to Cloudinary
-        - Return secure Cloudinary URL
-
-    MVP:
-        - Images are not deleted.
-        - Actual image is stored on Cloudinary.
-        - Only the Cloudinary URL is stored in the database.
+    This service belongs only to the Waste module.
+    Reward functionality is intentionally not included.
     """
-
-    # --------------------------------------------------------
-    # Image configuration
-    # --------------------------------------------------------
 
     MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 
@@ -90,14 +69,8 @@ class ImageService:
 
     CLOUDINARY_FOLDER = "wastewise/waste"
 
-    # --------------------------------------------------------
-    # Initialization
-    # --------------------------------------------------------
-
     def __init__(self):
-        """
-        Configure Cloudinary using application settings.
-        """
+        """Configure Cloudinary using application settings."""
 
         cloudinary.config(
             cloud_name=cloudinarysetting.CLOUDINARY_CLOUD_NAME,
@@ -124,28 +97,16 @@ class ImageService:
             - File must not exceed 10 MB
         """
 
-        # ----------------------------------------------------
-        # Check file
-        # ----------------------------------------------------
-
         if file is None:
             raise InvalidImageError(
                 "No image file was provided."
             )
-
-        # ----------------------------------------------------
-        # Check content type
-        # ----------------------------------------------------
 
         if file.content_type not in self.ALLOWED_CONTENT_TYPES:
             raise InvalidImageError(
                 "Unsupported image format. "
                 "Allowed formats are JPEG, PNG and WebP."
             )
-
-        # ----------------------------------------------------
-        # Read file
-        # ----------------------------------------------------
 
         try:
             file_bytes = await file.read()
@@ -155,18 +116,10 @@ class ImageService:
                 "Unable to read the uploaded image."
             ) from exc
 
-        # ----------------------------------------------------
-        # Check empty file
-        # ----------------------------------------------------
-
         if not file_bytes:
             raise InvalidImageError(
                 "The uploaded image is empty."
             )
-
-        # ----------------------------------------------------
-        # Check file size
-        # ----------------------------------------------------
 
         if len(file_bytes) > self.MAX_FILE_SIZE:
             raise InvalidImageError(
@@ -187,24 +140,13 @@ class ImageService:
         Validate and upload an image to Cloudinary.
 
         Returns:
-            UploadedImage(
-                url="https://...",
-                public_id="..."
-            )
+            UploadedImage containing the secure URL and public ID.
         """
 
         try:
-            # ------------------------------------------------
-            # Validate image
-            # ------------------------------------------------
-
             file_bytes = await self.validate_image(
                 file=file,
             )
-
-            # ------------------------------------------------
-            # Upload to Cloudinary
-            # ------------------------------------------------
 
             upload_result = await asyncio.to_thread(
                 cloudinary.uploader.upload,
@@ -213,20 +155,12 @@ class ImageService:
                 resource_type="image",
             )
 
-            # ------------------------------------------------
-            # Get secure URL
-            # ------------------------------------------------
-
             secure_url = upload_result.get("secure_url")
 
             if not secure_url:
                 raise ImageUploadError(
                     "Cloudinary did not return a secure image URL."
                 )
-
-            # ------------------------------------------------
-            # Get public ID
-            # ------------------------------------------------
 
             public_id = upload_result.get("public_id")
 
@@ -241,11 +175,9 @@ class ImageService:
             )
 
         except InvalidImageError:
-            # Do not hide our validation error.
             raise
 
         except ImageUploadError:
-            # Do not wrap our own upload errors again.
             raise
 
         except Exception as exc:

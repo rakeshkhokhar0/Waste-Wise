@@ -7,10 +7,6 @@ from sqlalchemy.orm import selectinload
 
 from server.app.modules.waste.models import (
     DisposalStep,
-    RewardStepType,
-    RewardTransaction,
-    RewardTransactionType,
-    RewardWallet,
     WasteAnalysis,
     WasteAnalysisStatus,
     WasteCategory,
@@ -20,18 +16,9 @@ from server.app.modules.waste.models import (
 
 class WasteRepository:
     """
-    Repository layer for the Waste module.
+    Repository for the Waste module only.
 
-    Responsibilities:
-        - Database CRUD operations
-        - Waste analysis data
-        - Category results
-        - Disposal steps
-        - Waste history
-        - Reward wallet operations
-        - Reward transactions
-        - Reward statistics
-        - Leaderboard
+    Rewards logic is NOT kept here.
     """
 
     def __init__(self, session: AsyncSession):
@@ -71,12 +58,12 @@ class WasteRepository:
         user_id: UUID,
     ) -> WasteAnalysis | None:
 
-        stmt = select(WasteAnalysis).where(
-            WasteAnalysis.id == analysis_id,
-            WasteAnalysis.user_id == user_id,
+        result = await self.session.execute(
+            select(WasteAnalysis).where(
+                WasteAnalysis.id == analysis_id,
+                WasteAnalysis.user_id == user_id,
+            )
         )
-
-        result = await self.session.execute(stmt)
 
         return result.scalar_one_or_none()
 
@@ -273,9 +260,6 @@ class WasteRepository:
             step_number=step_number,
             instruction=instruction,
             is_completed=False,
-            reward_step_type=RewardStepType.NORMAL,
-            reward_points=10,
-            reward_awarded=False,
             created_at=now,
             updated_at=now,
         )
@@ -303,9 +287,6 @@ class WasteRepository:
                 step_number=index,
                 instruction=instruction,
                 is_completed=False,
-                reward_step_type=RewardStepType.NORMAL,
-                reward_points=10,
-                reward_awarded=False,
                 created_at=now,
                 updated_at=now,
             )
@@ -363,7 +344,7 @@ class WasteRepository:
         category_result_id: UUID,
     ) -> list[DisposalStep]:
 
-        stmt = (
+        result = await self.session.execute(
             select(DisposalStep)
             .where(
                 DisposalStep.waste_category_result_id
@@ -373,8 +354,6 @@ class WasteRepository:
                 DisposalStep.step_number.asc()
             )
         )
-
-        result = await self.session.execute(stmt)
 
         return list(result.scalars().all())
 
@@ -407,377 +386,7 @@ class WasteRepository:
         await self.session.flush()
 
     # ========================================================
-    # REWARD WALLET
-    # ========================================================
-
-    async def get_or_create_reward_wallet(
-        self,
-        user_id: UUID,
-    ) -> RewardWallet:
-
-        stmt = select(RewardWallet).where(
-            RewardWallet.user_id == user_id
-        )
-
-        result = await self.session.execute(stmt)
-
-        wallet = result.scalar_one_or_none()
-
-        if wallet is not None:
-            return wallet
-
-        wallet = RewardWallet(
-            user_id=user_id,
-            total_earned_points=0,
-            total_spent_points=0,
-            balance_points=0,
-        )
-
-        self.session.add(wallet)
-
-        await self.session.flush()
-
-        return wallet
-
-    async def add_reward_points(
-        self,
-        user_id: UUID,
-        points: int,
-        transaction_type: RewardTransactionType | str,
-        description: str,
-        disposal_step_id: UUID | None = None,
-        waste_analysis_id: UUID | None = None,
-    ) -> RewardTransaction:
-
-        if points <= 0:
-            raise ValueError(
-                "Reward points must be greater than zero."
-            )
-
-        wallet = await self.get_or_create_reward_wallet(
-            user_id=user_id
-        )
-
-        wallet.total_earned_points += points
-        wallet.balance_points += points
-        wallet.updated_at = datetime.now()
-
-        transaction = RewardTransaction(
-            wallet_id=wallet.id,
-            user_id=user_id,
-            disposal_step_id=disposal_step_id,
-            waste_analysis_id=waste_analysis_id,
-            transaction_type=transaction_type,
-            points=points,
-            description=description,
-        )
-
-        self.session.add(transaction)
-
-        await self.session.flush()
-
-        return transaction
-
-    # ========================================================
-    # REWARD TRANSACTION CHECKS
-    # ========================================================
-
-    async def get_step_reward_transaction(
-        self,
-        step_id: UUID,
-    ) -> RewardTransaction | None:
-
-        stmt = (
-            select(RewardTransaction)
-            .where(
-                RewardTransaction.disposal_step_id == step_id,
-                RewardTransaction.transaction_type
-                == RewardTransactionType.STEP_COMPLETION,
-            )
-            .order_by(
-                RewardTransaction.created_at.asc()
-            )
-            .limit(1)
-        )
-
-        result = await self.session.execute(stmt)
-
-        return result.scalar_one_or_none()
-
-    async def get_analysis_completion_reward(
-        self,
-        analysis_id: UUID,
-    ) -> RewardTransaction | None:
-
-        stmt = (
-            select(RewardTransaction)
-            .where(
-                RewardTransaction.waste_analysis_id
-                == analysis_id,
-                RewardTransaction.transaction_type
-                == RewardTransactionType.ANALYSIS_COMPLETION,
-            )
-            .order_by(
-                RewardTransaction.created_at.asc()
-            )
-            .limit(1)
-        )
-
-        result = await self.session.execute(stmt)
-
-        return result.scalar_one_or_none()
-
-    # ========================================================
-    # REWARD SUMMARY
-    # ========================================================
-
-    async def get_reward_summary(
-        self,
-        user_id: UUID,
-    ) -> dict:
-
-        wallet = await self.get_or_create_reward_wallet(
-            user_id=user_id
-        )
-
-        return {
-            "total_earned_points": int(
-                wallet.total_earned_points or 0
-            ),
-            "total_spent_points": int(
-                wallet.total_spent_points or 0
-            ),
-            "balance_points": int(
-                wallet.balance_points or 0
-            ),
-        }
-
-    # ========================================================
-    # REWARD HISTORY
-    # ========================================================
-
-    async def get_reward_history(
-        self,
-        user_id: UUID,
-        *,
-        page: int = 1,
-        page_size: int = 20,
-    ) -> tuple[list[RewardTransaction], int]:
-
-        offset = (page - 1) * page_size
-
-        count_stmt = select(
-            func.count(RewardTransaction.id)
-        ).where(
-            RewardTransaction.user_id == user_id
-        )
-
-        count_result = await self.session.execute(
-            count_stmt
-        )
-
-        total = int(
-            count_result.scalar_one() or 0
-        )
-
-        stmt = (
-            select(RewardTransaction)
-            .where(
-                RewardTransaction.user_id == user_id
-            )
-            .order_by(
-                RewardTransaction.created_at.desc()
-            )
-            .offset(offset)
-            .limit(page_size)
-        )
-
-        result = await self.session.execute(stmt)
-
-        transactions = list(
-            result.scalars().all()
-        )
-
-        return transactions, total
-
-    # ========================================================
-    # REWARD STATISTICS
-    # ========================================================
-
-    async def get_reward_stats(
-        self,
-        user_id: UUID,
-    ) -> dict:
-
-        wallet = await self.get_or_create_reward_wallet(
-            user_id=user_id
-        )
-
-        step_stmt = select(
-            func.count(RewardTransaction.id)
-        ).where(
-            RewardTransaction.user_id == user_id,
-            RewardTransaction.transaction_type
-            == RewardTransactionType.STEP_COMPLETION,
-        )
-
-        analysis_stmt = select(
-            func.count(RewardTransaction.id)
-        ).where(
-            RewardTransaction.user_id == user_id,
-            RewardTransaction.transaction_type
-            == RewardTransactionType.ANALYSIS_COMPLETION,
-        )
-
-        step_result = await self.session.execute(
-            step_stmt
-        )
-
-        analysis_result = await self.session.execute(
-            analysis_stmt
-        )
-
-        completed_steps = int(
-            step_result.scalar_one() or 0
-        )
-
-        completed_analyses = int(
-            analysis_result.scalar_one() or 0
-        )
-
-        return {
-            "total_earned_points": int(
-                wallet.total_earned_points or 0
-            ),
-            "total_spent_points": int(
-                wallet.total_spent_points or 0
-            ),
-            "balance_points": int(
-                wallet.balance_points or 0
-            ),
-            "completed_steps": completed_steps,
-            "completed_analyses": completed_analyses,
-        }
-
-    # ========================================================
-    # LEADERBOARD
-    # ========================================================
-
-    async def get_leaderboard(
-        self,
-        *,
-        limit: int = 10,
-    ) -> list[dict]:
-
-        from server.app.modules.user.models.user_model import User
-
-        stmt = (
-            select(
-                RewardWallet.user_id,
-                User.user_name,
-                RewardWallet.total_earned_points,
-            )
-            .join(
-                User,
-                User.id == RewardWallet.user_id,
-            )
-            .order_by(
-                RewardWallet.total_earned_points.desc(),
-                RewardWallet.user_id.asc(),
-            )
-            .limit(limit)
-        )
-
-        result = await self.session.execute(stmt)
-
-        rows = result.all()
-
-        leaderboard = []
-
-        for rank, row in enumerate(rows, start=1):
-            leaderboard.append(
-                {
-                    "rank": rank,
-                    "user_id": row.user_id,
-                    "user_name": row.user_name,
-                    "total_earned_points": int(
-                        row.total_earned_points or 0
-                    ),
-                }
-            )
-
-        return leaderboard
-
-    # ========================================================
-    # USER RANK
-    # ========================================================
-
-    async def get_user_rank(
-        self,
-        user_id: UUID,
-    ) -> dict | None:
-
-        wallet_stmt = select(
-            RewardWallet.total_earned_points
-        ).where(
-            RewardWallet.user_id == user_id
-        )
-
-        wallet_result = await self.session.execute(
-            wallet_stmt
-        )
-
-        user_points = wallet_result.scalar_one_or_none()
-
-        if user_points is None:
-            return None
-
-        rank_stmt = select(
-            func.count(RewardWallet.id)
-        ).where(
-            RewardWallet.total_earned_points
-            > user_points
-        )
-
-        rank_result = await self.session.execute(
-            rank_stmt
-        )
-
-        rank = int(
-            rank_result.scalar_one() or 0
-        ) + 1
-
-        return {
-            "user_id": user_id,
-            "rank": rank,
-            "total_earned_points": int(
-                user_points or 0
-            ),
-        }
-
-    # ========================================================
-    # TOTAL POINTS
-    # ========================================================
-
-    async def get_total_points(
-        self,
-        user_id: UUID,
-    ) -> int:
-
-        stmt = select(
-            RewardWallet.balance_points
-        ).where(
-            RewardWallet.user_id == user_id
-        )
-
-        result = await self.session.execute(stmt)
-
-        points = result.scalar_one_or_none()
-
-        return int(points or 0)
-
-    # ========================================================
-    # HISTORY
+    # WASTE HISTORY
     # ========================================================
 
     async def get_history(
@@ -807,25 +416,18 @@ class WasteRepository:
             )
 
         if start_date is not None:
-            start_datetime = datetime.combine(
-                start_date,
-                time.min,
-            )
-
             conditions.append(
                 WasteAnalysis.created_at
-                >= start_datetime
+                >= datetime.combine(start_date, time.min)
             )
 
         if end_date is not None:
-            end_datetime = datetime.combine(
-                end_date + timedelta(days=1),
-                time.min,
-            )
-
             conditions.append(
                 WasteAnalysis.created_at
-                < end_datetime
+                < datetime.combine(
+                    end_date + timedelta(days=1),
+                    time.min,
+                )
             )
 
         count_stmt = (
@@ -844,10 +446,8 @@ class WasteRepository:
                 == WasteAnalysis.id,
             )
 
-        count_stmt = count_stmt.where(*conditions)
-
         count_result = await self.session.execute(
-            count_stmt
+            count_stmt.where(*conditions)
         )
 
         total = int(
@@ -869,22 +469,13 @@ class WasteRepository:
             .order_by(
                 WasteAnalysis.created_at.desc()
             )
-        )
-
-        offset = (page - 1) * page_size
-
-        stmt = (
-            stmt.offset(offset)
+            .offset((page - 1) * page_size)
             .limit(page_size)
         )
 
         result = await self.session.execute(stmt)
 
-        analyses = list(
-            result.scalars().all()
-        )
-
-        return analyses, total
+        return list(result.scalars().all()), total
 
     # ========================================================
     # RECENT HISTORY
@@ -896,7 +487,7 @@ class WasteRepository:
         limit: int = 5,
     ) -> list[WasteAnalysis]:
 
-        stmt = (
+        result = await self.session.execute(
             select(WasteAnalysis)
             .where(
                 WasteAnalysis.user_id == user_id
@@ -906,8 +497,6 @@ class WasteRepository:
             )
             .limit(limit)
         )
-
-        result = await self.session.execute(stmt)
 
         return list(result.scalars().all())
 
@@ -920,36 +509,28 @@ class WasteRepository:
         user_id: UUID,
     ) -> int:
 
-        stmt = select(
-            func.count(WasteAnalysis.id)
-        ).where(
-            WasteAnalysis.user_id == user_id
+        result = await self.session.execute(
+            select(func.count(WasteAnalysis.id)).where(
+                WasteAnalysis.user_id == user_id
+            )
         )
 
-        result = await self.session.execute(stmt)
-
-        return int(
-            result.scalar_one() or 0
-        )
+        return int(result.scalar_one() or 0)
 
     async def count_completed_analyses(
         self,
         user_id: UUID,
     ) -> int:
 
-        stmt = select(
-            func.count(WasteAnalysis.id)
-        ).where(
-            WasteAnalysis.user_id == user_id,
-            WasteAnalysis.status
-            == WasteAnalysisStatus.COMPLETED,
+        result = await self.session.execute(
+            select(func.count(WasteAnalysis.id)).where(
+                WasteAnalysis.user_id == user_id,
+                WasteAnalysis.status
+                == WasteAnalysisStatus.COMPLETED,
+            )
         )
 
-        result = await self.session.execute(stmt)
-
-        return int(
-            result.scalar_one() or 0
-        )
+        return int(result.scalar_one() or 0)
 
     # ========================================================
     # CATEGORY STATISTICS
@@ -968,33 +549,24 @@ class WasteRepository:
         ]
 
         if start_date is not None:
-            start_datetime = datetime.combine(
-                start_date,
-                time.min,
-            )
-
             conditions.append(
                 WasteAnalysis.created_at
-                >= start_datetime
+                >= datetime.combine(start_date, time.min)
             )
 
         if end_date is not None:
-            end_datetime = datetime.combine(
-                end_date + timedelta(days=1),
-                time.min,
-            )
-
             conditions.append(
                 WasteAnalysis.created_at
-                < end_datetime
+                < datetime.combine(
+                    end_date + timedelta(days=1),
+                    time.min,
+                )
             )
 
-        stmt = (
+        result = await self.session.execute(
             select(
                 WasteCategoryResult.category,
-                func.count(
-                    WasteCategoryResult.id
-                ),
+                func.count(WasteCategoryResult.id),
             )
             .join(
                 WasteAnalysis,
@@ -1002,16 +574,12 @@ class WasteRepository:
                 == WasteCategoryResult.waste_analysis_id,
             )
             .where(*conditions)
-            .group_by(
-                WasteCategoryResult.category
-            )
+            .group_by(WasteCategoryResult.category)
             .order_by(
                 func.count(
                     WasteCategoryResult.id
                 ).desc()
             )
         )
-
-        result = await self.session.execute(stmt)
 
         return list(result.all())

@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.app.modules.waste.models import (
     DisposalStep,
-    RewardTransactionType,
     WasteAnalysis,
     WasteAnalysisStatus,
 )
@@ -14,33 +13,30 @@ from server.app.modules.waste.repository import WasteRepository
 
 
 class DisposalServiceError(Exception):
-    """Base exception for disposal-step and reward operations."""
+    """Base exception for disposal-step operations."""
 
     pass
 
 
 class DisposalService:
     """
-    Service layer for disposal steps and rewards.
+    Service layer for disposal steps.
 
     Responsibilities:
         - Validate AI-generated disposal instructions
         - Create disposal steps
         - Fetch disposal steps
+        - Update disposal-step completion
         - Calculate disposal progress
-        - Calculate possible/earned rewards
+        - Check category completion
+        - Check analysis completion
         - Delete disposal steps
+
+    Rewards are handled entirely by the Rewards module.
     """
 
     MAX_DISPOSAL_STEPS = 15
     MAX_INSTRUCTION_LENGTH = 500
-
-    FINAL_COMPLETION_BONUS = 50
-
-    BASIC_STEP_POINTS = 5
-    NORMAL_STEP_POINTS = 10
-    IMPORTANT_STEP_POINTS = 15
-    COMPLEX_STEP_POINTS = 25
 
     def __init__(
         self,
@@ -188,15 +184,10 @@ class DisposalService:
     ) -> WasteAnalysis:
 
         try:
-            was_completed = bool(step.is_completed)
-
             await self.waste_repository.update_step_completion(
                 step=step,
                 is_completed=True,
             )
-
-            # Reward is handled by WasteService.
-            # This service only manages disposal progress.
 
             all_steps = self._get_all_steps(analysis)
 
@@ -313,83 +304,6 @@ class DisposalService:
             step.is_completed
             for step in all_steps
         )
-
-    # ========================================================
-    # POSSIBLE REWARD
-    # ========================================================
-
-    def calculate_analysis_reward(
-        self,
-        analysis: WasteAnalysis,
-    ) -> int:
-
-        all_steps = self._get_all_steps(analysis)
-
-        step_points = sum(
-            int(step.reward_points)
-            for step in all_steps
-        )
-
-        return step_points + self.FINAL_COMPLETION_BONUS
-
-    # ========================================================
-    # EARNED REWARD
-    # ========================================================
-
-    def calculate_earned_reward(
-        self,
-        analysis: WasteAnalysis,
-    ) -> int:
-
-        all_steps = self._get_all_steps(analysis)
-
-        earned_step_points = sum(
-            int(step.reward_points)
-            for step in all_steps
-            if step.reward_awarded
-        )
-
-        final_bonus = (
-            self.FINAL_COMPLETION_BONUS
-            if analysis.status
-            == WasteAnalysisStatus.COMPLETED
-            else 0
-        )
-
-        return earned_step_points + final_bonus
-
-    # ========================================================
-    # GET REWARD SUMMARY
-    # ========================================================
-
-    def get_reward_summary(
-        self,
-        analysis: WasteAnalysis,
-    ) -> dict:
-
-        possible_points = (
-            self.calculate_analysis_reward(analysis)
-        )
-
-        earned_points = (
-            self.calculate_earned_reward(analysis)
-        )
-
-        final_bonus_earned = (
-            analysis.status
-            == WasteAnalysisStatus.COMPLETED
-        )
-
-        return {
-            "earned_points": earned_points,
-            "possible_points": possible_points,
-            "remaining_points": max(
-                possible_points - earned_points,
-                0,
-            ),
-            "final_bonus": self.FINAL_COMPLETION_BONUS,
-            "final_bonus_earned": final_bonus_earned,
-        }
 
     # ========================================================
     # DELETE DISPOSAL STEP

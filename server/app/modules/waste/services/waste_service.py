@@ -7,7 +7,6 @@ from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.app.modules.waste.models import (
-    RewardTransactionType,
     WasteAnalysis,
     WasteAnalysisStatus,
 )
@@ -56,15 +55,14 @@ class WasteService:
         - Store AI-generated disposal steps
         - Fetch complete analysis
         - Complete disposal steps
-        - Award reward points
         - Calculate disposal progress
         - Mark analysis completed
-        - Award final completion bonus
         - Fetch waste history
         - Delete waste analysis
 
-    Transaction ownership belongs to this service.
-    Repository methods do not commit.
+    Reward functionality is handled by the Rewards module.
+    This service contains no reward calculation, reward transaction,
+    wallet, or reward-awarding logic.
     """
 
     def __init__(
@@ -138,8 +136,6 @@ class WasteService:
                     "Image upload returned no result."
                 )
 
-            # ImageService normally returns an object containing
-            # the uploaded image URL.
             image_url = getattr(
                 uploaded_image,
                 "url",
@@ -257,7 +253,6 @@ class WasteService:
         except Exception as exc:
             await self.session.rollback()
 
-            # Keep the actual error available for debugging.
             raise WasteAnalysisError(
                 f"Failed to analyze waste image: {exc}"
             ) from exc
@@ -387,15 +382,7 @@ class WasteService:
                 )
 
             # ------------------------------------------------
-            # 3. Remember previous state
-            # ------------------------------------------------
-
-            was_completed = bool(
-                step.is_completed
-            )
-
-            # ------------------------------------------------
-            # 4. Update step
+            # 3. Update step completion
             # ------------------------------------------------
 
             await self.waste_repository.update_step_completion(
@@ -404,17 +391,7 @@ class WasteService:
             )
 
             # ------------------------------------------------
-            # 5. Award reward only on False -> True
-            # ------------------------------------------------
-
-            if is_completed and not was_completed:
-                await self._award_step_reward(
-                    step=step,
-                    analysis=analysis,
-                )
-
-            # ------------------------------------------------
-            # 6. Reload analysis
+            # 4. Reload analysis
             # ------------------------------------------------
 
             analysis = (
@@ -430,7 +407,7 @@ class WasteService:
                 )
 
             # ------------------------------------------------
-            # 7. Get all disposal steps
+            # 5. Get all disposal steps
             # ------------------------------------------------
 
             all_steps = self._get_all_steps(
@@ -438,7 +415,7 @@ class WasteService:
             )
 
             # ------------------------------------------------
-            # 8. Calculate progress
+            # 6. Calculate progress
             # ------------------------------------------------
 
             (
@@ -450,7 +427,7 @@ class WasteService:
             )
 
             # ------------------------------------------------
-            # 9. Update analysis status
+            # 7. Update analysis status
             # ------------------------------------------------
 
             if (
@@ -460,18 +437,13 @@ class WasteService:
                 analysis.status = (
                     WasteAnalysisStatus.COMPLETED
                 )
-
-                await self._award_final_completion_bonus(
-                    analysis=analysis,
-                )
-
             else:
                 analysis.status = (
                     WasteAnalysisStatus.IN_PROGRESS
                 )
 
             # ------------------------------------------------
-            # 10. Commit
+            # 8. Commit
             # ------------------------------------------------
 
             await self.session.flush()
@@ -489,101 +461,6 @@ class WasteService:
             raise WasteServiceError(
                 f"Failed to update disposal step: {exc}"
             ) from exc
-
-    # ========================================================
-    # AWARD STEP REWARD
-    # ========================================================
-
-    async def _award_step_reward(
-        self,
-        step,
-        analysis: WasteAnalysis,
-    ) -> None:
-
-        if step.reward_awarded:
-            return
-
-        existing_reward = (
-            await self.waste_repository.get_step_reward_transaction(
-                step_id=step.id,
-            )
-        )
-
-        if existing_reward is not None:
-            step.reward_awarded = True
-            await self.session.flush()
-            return
-
-        points = int(
-            step.reward_points or 0
-        )
-
-        if points <= 0:
-            raise WasteServiceError(
-                "Invalid reward points for disposal step."
-            )
-
-        await self.waste_repository.add_reward_points(
-            user_id=analysis.user_id,
-            points=points,
-            transaction_type=(
-                RewardTransactionType.STEP_COMPLETION
-            ),
-            description=(
-                f"Completed disposal step "
-                f"{step.step_number}: "
-                f"{step.instruction}"
-            ),
-            disposal_step_id=step.id,
-            waste_analysis_id=analysis.id,
-        )
-
-        step.reward_awarded = True
-
-        await self.session.flush()
-
-    # ========================================================
-    # AWARD FINAL COMPLETION BONUS
-    # ========================================================
-
-    async def _award_final_completion_bonus(
-        self,
-        analysis: WasteAnalysis,
-    ) -> None:
-
-        existing_reward = (
-            await self.waste_repository
-            .get_analysis_completion_reward(
-                analysis_id=analysis.id,
-            )
-        )
-
-        if existing_reward is not None:
-            return
-
-        bonus = int(
-            self.disposal_service.FINAL_COMPLETION_BONUS
-        )
-
-        if bonus <= 0:
-            raise WasteServiceError(
-                "Invalid final completion bonus."
-            )
-
-        await self.waste_repository.add_reward_points(
-            user_id=analysis.user_id,
-            points=bonus,
-            transaction_type=(
-                RewardTransactionType.ANALYSIS_COMPLETION
-            ),
-            description=(
-                "Completed all disposal steps "
-                "for a waste analysis."
-            ),
-            waste_analysis_id=analysis.id,
-        )
-
-        await self.session.flush()
 
     # ========================================================
     # GET ALL STEPS
@@ -634,73 +511,6 @@ class WasteService:
             "completed": (
                 total_steps > 0
                 and completed_steps == total_steps
-            ),
-        }
-
-    # ========================================================
-    # GET REWARD INFORMATION
-    # ========================================================
-
-    def get_analysis_rewards(
-        self,
-        analysis: WasteAnalysis,
-    ) -> dict:
-
-        all_steps = self._get_all_steps(
-            analysis
-        )
-
-        possible_step_points = sum(
-            int(step.reward_points or 0)
-            for step in all_steps
-        )
-
-        earned_step_points = sum(
-            int(step.reward_points or 0)
-            for step in all_steps
-            if step.reward_awarded
-        )
-
-        final_bonus = int(
-            self.disposal_service.FINAL_COMPLETION_BONUS
-        )
-
-        final_bonus_earned = (
-            analysis.status
-            == WasteAnalysisStatus.COMPLETED
-        )
-
-        total_possible_points = (
-            possible_step_points + final_bonus
-        )
-
-        total_earned_points = (
-            earned_step_points
-            + (
-                final_bonus
-                if final_bonus_earned
-                else 0
-            )
-        )
-
-        return {
-            "possible_step_points": (
-                possible_step_points
-            ),
-            "earned_step_points": (
-                earned_step_points
-            ),
-            "final_completion_bonus": (
-                final_bonus
-            ),
-            "final_bonus_earned": (
-                final_bonus_earned
-            ),
-            "total_possible_points": (
-                total_possible_points
-            ),
-            "total_earned_points": (
-                total_earned_points
             ),
         }
 

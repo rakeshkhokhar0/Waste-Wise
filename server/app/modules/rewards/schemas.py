@@ -64,3 +64,4 @@ class RewardStatsResponse(BaseModel):
     analysis_completion_points: int = Field(ge=0)
     total_completed_steps: int = Field(ge=0)
     completed_analyses: int = Field(ge=0)
+    total_spent_points: int = Field(ge=0)

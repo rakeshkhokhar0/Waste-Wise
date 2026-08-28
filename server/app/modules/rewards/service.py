@@ -3,34 +3,32 @@
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from server.app.modules.waste.repository import WasteRepository
+
+from server.app.modules.rewards.models import RewardTransactionType
+from server.app.modules.rewards.repository import RewardRepository
 
 
 class RewardServiceError(Exception):
     """Base exception for reward service operations."""
 
-    pass
-
 
 class RewardService:
     """
-    Service layer for reward operations.
+    Service layer for the Rewards module.
 
-    Responsibilities:
-        - Get user's reward summary
-        - Get reward transaction history
-        - Get reward statistics
-        - Get leaderboard
+    Contains only reward-related business logic.
     """
 
     MAX_PAGE_SIZE = 100
     DEFAULT_PAGE_SIZE = 20
     MAX_LEADERBOARD_SIZE = 100
 
+    FINAL_COMPLETION_BONUS = 50
+
     def __init__(
         self,
         session: AsyncSession,
-        reward_repository: WasteRepository,
+        reward_repository: RewardRepository,
     ):
         self.session = session
         self.reward_repository = reward_repository
@@ -42,17 +40,20 @@ class RewardService:
     async def get_reward_summary(
         self,
         user_id: UUID,
-    ):
-        """Get the current reward summary for a user."""
+    ) -> dict:
 
         try:
-            return await self.reward_repository.get_reward_summary(
+            summary = await self.reward_repository.get_reward_summary(
                 user_id=user_id,
             )
 
-        except Exception as exc:
-            await self.session.rollback()
+            return {
+                "total_points": summary["total_points"],
+                "total_earned": summary["total_earned_points"],
+                "total_transactions": summary["transaction_count"],
+            }
 
+        except Exception as exc:
             raise RewardServiceError(
                 "Failed to fetch reward summary."
             ) from exc
@@ -68,8 +69,6 @@ class RewardService:
         page: int = 1,
         page_size: int = DEFAULT_PAGE_SIZE,
     ):
-        """Get paginated reward transaction history."""
-
         if page < 1:
             raise ValueError(
                 "Page must be greater than or equal to 1."
@@ -77,8 +76,7 @@ class RewardService:
 
         if page_size < 1 or page_size > self.MAX_PAGE_SIZE:
             raise ValueError(
-                f"Page size must be between 1 and "
-                f"{self.MAX_PAGE_SIZE}."
+                f"Page size must be between 1 and {self.MAX_PAGE_SIZE}."
             )
 
         try:
@@ -89,8 +87,6 @@ class RewardService:
             )
 
         except Exception as exc:
-            await self.session.rollback()
-
             raise RewardServiceError(
                 "Failed to fetch reward history."
             ) from exc
@@ -106,13 +102,6 @@ class RewardService:
         page: int = 1,
         page_size: int = DEFAULT_PAGE_SIZE,
     ):
-        """
-        Get reward transactions belonging to a user.
-
-        This is an alias-style service method useful for
-        reward history endpoints.
-        """
-
         return await self.get_reward_history(
             user_id=user_id,
             page=page,
@@ -126,8 +115,7 @@ class RewardService:
     async def get_reward_stats(
         self,
         user_id: UUID,
-    ):
-        """Get detailed reward statistics for a user."""
+    ) -> dict:
 
         try:
             return await self.reward_repository.get_reward_stats(
@@ -135,8 +123,6 @@ class RewardService:
             )
 
         except Exception as exc:
-            await self.session.rollback()
-
             raise RewardServiceError(
                 "Failed to fetch reward statistics."
             ) from exc
@@ -149,13 +135,11 @@ class RewardService:
         self,
         *,
         limit: int = 10,
-    ):
-        """Get the global reward leaderboard."""
+    ) -> list[dict]:
 
         if limit < 1 or limit > self.MAX_LEADERBOARD_SIZE:
             raise ValueError(
-                f"Limit must be between 1 and "
-                f"{self.MAX_LEADERBOARD_SIZE}."
+                f"Limit must be between 1 and {self.MAX_LEADERBOARD_SIZE}."
             )
 
         try:
@@ -164,8 +148,6 @@ class RewardService:
             )
 
         except Exception as exc:
-            await self.session.rollback()
-
             raise RewardServiceError(
                 "Failed to fetch reward leaderboard."
             ) from exc
@@ -177,8 +159,7 @@ class RewardService:
     async def get_user_rank(
         self,
         user_id: UUID,
-    ):
-        """Get the user's current leaderboard rank."""
+    ) -> dict | None:
 
         try:
             return await self.reward_repository.get_user_rank(
@@ -186,8 +167,6 @@ class RewardService:
             )
 
         except Exception as exc:
-            await self.session.rollback()
-
             raise RewardServiceError(
                 "Failed to fetch user reward rank."
             ) from exc
@@ -200,7 +179,6 @@ class RewardService:
         self,
         user_id: UUID,
     ) -> int:
-        """Get the user's current total reward points."""
 
         try:
             points = await self.reward_repository.get_total_points(
@@ -210,8 +188,98 @@ class RewardService:
             return int(points or 0)
 
         except Exception as exc:
-            await self.session.rollback()
-
             raise RewardServiceError(
                 "Failed to fetch total reward points."
+            ) from exc
+
+    # ========================================================
+    # AWARD STEP REWARD
+    # ========================================================
+
+    async def award_step_reward(
+        self,
+        *,
+        user_id: UUID,
+        step_id: UUID,
+        analysis_id: UUID,
+        step_number: int,
+        instruction: str,
+        points: int,
+    ):
+
+        if points <= 0:
+            raise RewardServiceError(
+                "Invalid reward points for disposal step."
+            )
+
+        try:
+            existing_reward = (
+                await self.reward_repository.get_step_reward_transaction(
+                    step_id=step_id,
+                )
+            )
+
+            if existing_reward is not None:
+                return existing_reward
+
+            return await self.reward_repository.add_reward_points(
+                user_id=user_id,
+                points=points,
+                transaction_type=RewardTransactionType.STEP_COMPLETION,
+                description=(
+                    f"Completed disposal step "
+                    f"{step_number}: {instruction}"
+                ),
+                disposal_step_id=step_id,
+                waste_analysis_id=analysis_id,
+            )
+
+        except RewardServiceError:
+            raise
+
+        except Exception as exc:
+            raise RewardServiceError(
+                "Failed to award disposal step reward."
+            ) from exc
+
+    # ========================================================
+    # AWARD FINAL COMPLETION BONUS
+    # ========================================================
+
+    async def award_completion_bonus(
+        self,
+        *,
+        user_id: UUID,
+        analysis_id: UUID,
+    ):
+
+        try:
+            existing_reward = (
+                await self.reward_repository.get_analysis_completion_reward(
+                    analysis_id=analysis_id,
+                )
+            )
+
+            if existing_reward is not None:
+                return existing_reward
+
+            return await self.reward_repository.add_reward_points(
+                user_id=user_id,
+                points=self.FINAL_COMPLETION_BONUS,
+                transaction_type=(
+                    RewardTransactionType.ANALYSIS_COMPLETION
+                ),
+                description=(
+                    "Completed all disposal steps "
+                    "for a waste analysis."
+                ),
+                waste_analysis_id=analysis_id,
+            )
+
+        except RewardServiceError:
+            raise
+
+        except Exception as exc:
+            raise RewardServiceError(
+                "Failed to award final completion bonus."
             ) from exc
