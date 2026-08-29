@@ -53,7 +53,11 @@ function WasteClassification({ onNavigate }) {
 
         const formData = new FormData()
 
-        formData.append('file', file)
+        // FIX: the backend endpoint declares
+        //   image: UploadFile = File(...)
+        // so the multipart field name MUST be "image",
+        // not "file", or FastAPI returns 422.
+        formData.append('image', file)
 
         setMessage('AI is identifying the waste...')
 
@@ -93,7 +97,8 @@ function WasteClassification({ onNavigate }) {
 
         setAnalysis(data)
 
-        // Store actual AI response.
+        // Store actual AI response (includes analysis.id,
+        // used later by the WasteJourney page).
         sessionStorage.setItem(
           'wastewise_analysis',
           JSON.stringify(data)
@@ -295,8 +300,9 @@ function WasteClassification({ onNavigate }) {
                     AI SUMMARY
                   </p>
 
+                  {/* FIX: backend field is ai_summary, not summary */}
                   <p className="mt-2 leading-relaxed text-slate-700">
-                    {analysis.summary}
+                    {analysis.ai_summary}
                   </p>
 
                 </div>
@@ -335,7 +341,7 @@ function WasteClassification({ onNavigate }) {
                     return (
 
                       <article
-                        key={`${category.category}-${index}`}
+                        key={category.id ?? `${category.category}-${index}`}
                         className="rounded-2xl border border-green-100 bg-white p-5 shadow-sm"
                       >
 
@@ -422,9 +428,12 @@ function WasteClassification({ onNavigate }) {
 
                           </div>
 
+                          {/* FIX: disposal_steps is an array of
+                              step objects ({id, instruction, ...}),
+                              not plain strings. */}
                           <p className="mt-2 text-sm leading-relaxed text-slate-600">
 
-                            {category.disposal_steps?.[0] ||
+                            {category.disposal_steps?.[0]?.instruction ||
                               'Follow the recommended disposal instructions.'}
 
                           </p>

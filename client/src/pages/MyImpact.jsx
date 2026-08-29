@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -5,40 +6,254 @@ import {
   CheckCircle2,
   Flame,
   Leaf,
-  Recycle,
   Sprout,
   Target,
   TrendingUp,
   Trophy,
   Trash2,
 } from 'lucide-react'
+import CategoryBreakdownCard from '../components/CategoryBreakdownCard'
 
-function MyImpact({ onNavigate }) {
-  const impact = {
-    totalWaste: 12.5,
-    recycledWaste: 7.2,
-    ecoScore: 82,
-    greenPoints: 340,
-    nextMilestone: 500,
-    verifiedActions: 18,
-    streak: 7,
-    plastic: 4.2,
-    paper: 3.1,
-    organic: 2.8,
-    other: 2.4,
+const API_BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL ??
+  'http://localhost:8000/api/v1'
+).replace(/\/$/, '')
+
+// Static UI threshold for the points progress bar — a game-design
+// choice, not something the backend defines or stores.
+const NEXT_MILESTONE = 500
+
+function getAccessToken() {
+  return (
+    window.localStorage.getItem('wastewise_access_token') ||
+    window.sessionStorage.getItem('wastewise_access_token')
+  )
+}
+
+// Same category-weight concept used in WasteJourney.jsx's
+// sustainabilityScore/greenPoints — kept identical on purpose so
+// the two pages agree conceptually. Here it's applied across every
+// category detected in the user's whole history, not just one
+// analysis.
+function categoryScoreWeight(category) {
+  const value = String(category).toLowerCase()
+
+  if (
+    value.includes('recycl') ||
+    value.includes('plastic') ||
+    value.includes('paper') ||
+    value.includes('metal') ||
+    value.includes('glass')
+  ) {
+    return 25
   }
 
+  if (value.includes('organic') || value.includes('compost')) {
+    return 30
+  }
+
+  if (value.includes('reuse') || value.includes('reusable')) {
+    return 35
+  }
+
+  return 15
+}
+
+function categoryPointsWeight(category) {
+  const value = String(category).toLowerCase()
+
+  if (value.includes('reuse') || value.includes('reusable')) {
+    return 35
+  }
+
+  if (value.includes('organic') || value.includes('compost')) {
+    return 30
+  }
+
+  if (
+    value.includes('recycl') ||
+    value.includes('plastic') ||
+    value.includes('paper') ||
+    value.includes('metal') ||
+    value.includes('glass')
+  ) {
+    return 25
+  }
+
+  return 10
+}
+
+const WEEKDAY_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
+
+// Real streak + weekly-dots data, computed from each analysis's
+// created_at timestamp — no separate "activity log" exists in the
+// backend, but analysis timestamps are a genuine proxy for "did
+// the user do something on WasteWise that day".
+function computeStreakAndWeek(historyItems) {
+  const activeDates = new Set(
+    historyItems.map((item) =>
+      new Date(item.created_at).toDateString()
+    )
+  )
+
+  // Current streak: consecutive days with at least one analysis,
+  // counting back from today (or yesterday, if nothing today yet).
+  let streak = 0
+  const cursor = new Date()
+
+  if (!activeDates.has(cursor.toDateString())) {
+    cursor.setDate(cursor.getDate() - 1)
+  }
+
+  while (activeDates.has(cursor.toDateString())) {
+    streak += 1
+    cursor.setDate(cursor.getDate() - 1)
+  }
+
+  // Monday-start week, so the dots line up with the M T W T F S S
+  // labels already in the UI.
+  const today = new Date()
+  const mondayOffset = (today.getDay() + 6) % 7
+  const monday = new Date(today)
+  monday.setDate(today.getDate() - mondayOffset)
+
+  const week = WEEKDAY_LABELS.map((label, index) => {
+    const date = new Date(monday)
+    date.setDate(monday.getDate() + index)
+
+    return {
+      day: label,
+      active: activeDates.has(date.toDateString()),
+    }
+  })
+
+  return { streak, week }
+}
+
+function MyImpact({ onNavigate }) {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  const [impact, setImpact] = useState({
+    totalEntries: 0,
+    recyclableEntries: 0,
+    stepsCompleted: 0,
+    ecoScore: 0,
+    greenPoints: 0,
+    streak: 0,
+    week: WEEKDAY_LABELS.map((label) => ({ day: label, active: false })),
+    categoryBreakdown: [], // [{ category, count }]
+    totalAnalyses: 0,
+  })
+
+  useEffect(() => {
+    const loadImpact = async () => {
+      const accessToken = getAccessToken()
+
+      if (!accessToken) {
+        onNavigate('/login')
+        return
+      }
+
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/waste/history?page=1&page_size=100`,
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        )
+
+        if (response.status === 401) {
+          onNavigate('/login')
+          return
+        }
+
+        if (!response.ok) {
+          throw new Error('Unable to load your impact data.')
+        }
+
+        const data = await response.json()
+        const items = data.items || []
+
+        // ---------------------------------------------------
+        // Flatten every category detection across every
+        // analysis (history rows only carry { category }, no
+        // item lists — so "entries" counts detections, not
+        // individual waste items).
+        // ---------------------------------------------------
+
+        const categoryCounts = {}
+        let totalEntries = 0
+        let scoreSum = 0
+        let scoreCount = 0
+        let greenPoints = 0
+
+        items.forEach((analysis) => {
+          (analysis.categories || []).forEach(({ category }) => {
+            totalEntries += 1
+
+            categoryCounts[category] =
+              (categoryCounts[category] || 0) + 1
+
+            scoreSum += categoryScoreWeight(category)
+            scoreCount += 1
+
+            greenPoints += categoryPointsWeight(category)
+          })
+        })
+
+        const stepsCompleted = items.reduce(
+          (sum, analysis) => sum + (analysis.completed_steps || 0),
+          0
+        )
+
+        const ecoScore =
+          scoreCount > 0 ? Math.round(scoreSum / scoreCount) : 0
+
+        const categoryBreakdown = Object.entries(categoryCounts)
+          .map(([category, count]) => ({ category, count }))
+          .sort((a, b) => b.count - a.count)
+
+        const { streak, week } = computeStreakAndWeek(items)
+
+        setImpact({
+          totalEntries,
+          recyclableEntries: categoryCounts.recyclable || 0,
+          stepsCompleted,
+          ecoScore,
+          greenPoints,
+          streak,
+          week,
+          categoryBreakdown,
+          totalAnalyses: data.total ?? items.length,
+        })
+      } catch (err) {
+        console.error('Impact load error:', err)
+        setError('Some of your impact data could not be loaded right now.')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    loadImpact()
+  }, [])
+
   const pointsRemaining = Math.max(
-    impact.nextMilestone - impact.greenPoints,
+    NEXT_MILESTONE - impact.greenPoints,
     0
   )
 
   const pointsProgress = Math.min(
-    (impact.greenPoints / impact.nextMilestone) * 100,
+    (impact.greenPoints / NEXT_MILESTONE) * 100,
     100
   )
 
   const ecoScoreProgress = impact.ecoScore
+
+  const recyclablePercent =
+    impact.totalEntries > 0
+      ? Math.round(
+          (impact.recyclableEntries / impact.totalEntries) * 100
+        )
+      : 0
 
   return (
     <main className="min-h-screen bg-[#f5f8f3] text-slate-900">
@@ -72,6 +287,12 @@ function MyImpact({ onNavigate }) {
       {/* PAGE CONTENT */}
       <div className="mx-auto max-w-7xl px-6 py-10 lg:px-10">
 
+        {error && (
+          <div className="mb-6 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-700">
+            {error}
+          </div>
+        )}
+
         {/* HERO */}
         <section className="overflow-hidden rounded-3xl bg-gradient-to-br from-green-800 to-emerald-600 p-7 text-white shadow-xl shadow-green-950/10 lg:p-10">
 
@@ -88,15 +309,15 @@ function MyImpact({ onNavigate }) {
               </h1>
 
               <p className="mt-5 max-w-2xl text-base leading-relaxed text-green-50">
-                You've made{' '}
+                You've completed{' '}
                 <strong className="text-white">
-                  {impact.verifiedActions} sustainable choices
+                  {loading ? '—' : impact.stepsCompleted} disposal steps
                 </strong>{' '}
-                so far. Together, you've given{' '}
+                so far. Together, you've logged{' '}
                 <strong className="text-white">
-                  {impact.totalWaste} kg of waste
+                  {loading ? '—' : impact.totalEntries} waste categories
                 </strong>{' '}
-                a better next step.
+                across {loading ? '—' : impact.totalAnalyses} uploads.
               </p>
 
               <p className="mt-4 max-w-2xl text-sm leading-relaxed text-green-100">
@@ -112,7 +333,7 @@ function MyImpact({ onNavigate }) {
                     Eco Score
                   </p>
                   <p className="mt-1 text-xl font-bold">
-                    {impact.ecoScore}/100
+                    {loading ? '—' : `${impact.ecoScore}/100`}
                   </p>
                 </div>
 
@@ -121,7 +342,7 @@ function MyImpact({ onNavigate }) {
                     Green Points
                   </p>
                   <p className="mt-1 text-xl font-bold">
-                    {impact.greenPoints}
+                    {loading ? '—' : impact.greenPoints}
                   </p>
                 </div>
 
@@ -130,7 +351,7 @@ function MyImpact({ onNavigate }) {
                     Current Streak
                   </p>
                   <p className="mt-1 text-xl font-bold">
-                    {impact.streak} days
+                    {loading ? '—' : `${impact.streak} days`}
                   </p>
                 </div>
 
@@ -165,7 +386,7 @@ function MyImpact({ onNavigate }) {
                   />
 
                   <p className="mt-2 text-5xl font-bold">
-                    {impact.ecoScore}
+                    {loading ? '—' : impact.ecoScore}
                   </p>
 
                   <p className="mt-1 text-sm text-green-100">
@@ -199,15 +420,15 @@ function MyImpact({ onNavigate }) {
               </span>
 
               <p className="mt-5 text-sm text-slate-500">
-                Waste handled
+                Waste entries logged
               </p>
 
               <h2 className="mt-1 text-2xl font-bold">
-                {impact.totalWaste} kg
+                {loading ? '—' : impact.totalEntries}
               </h2>
 
               <p className="mt-1 text-xs text-slate-500">
-                This month
+                Across {loading ? '—' : impact.totalAnalyses} analyses
               </p>
 
             </article>
@@ -216,22 +437,19 @@ function MyImpact({ onNavigate }) {
             <article className="rounded-2xl border border-green-100 bg-white p-5">
 
               <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-sky-100 text-sky-700">
-                <Recycle size={21} />
+                <Trash2 size={21} />
               </span>
 
               <p className="mt-5 text-sm text-slate-500">
-                Waste recycled
+                Recyclable detections
               </p>
 
               <h2 className="mt-1 text-2xl font-bold">
-                {impact.recycledWaste} kg
+                {loading ? '—' : impact.recyclableEntries}
               </h2>
 
               <p className="mt-1 text-xs text-slate-500">
-                {Math.round(
-                  (impact.recycledWaste / impact.totalWaste) * 100
-                )}
-                % of total
+                {loading ? '—' : `${recyclablePercent}%`} of total entries
               </p>
 
             </article>
@@ -248,11 +466,11 @@ function MyImpact({ onNavigate }) {
               </p>
 
               <h2 className="mt-1 text-2xl font-bold">
-                {impact.greenPoints}
+                {loading ? '—' : impact.greenPoints}
               </h2>
 
               <p className="mt-1 text-xs text-slate-500">
-                {pointsRemaining} to next milestone
+                {loading ? '—' : pointsRemaining} to next milestone
               </p>
 
             </article>
@@ -269,7 +487,7 @@ function MyImpact({ onNavigate }) {
               </p>
 
               <h2 className="mt-1 text-2xl font-bold">
-                {impact.streak} days
+                {loading ? '—' : `${impact.streak} days`}
               </h2>
 
               <p className="mt-1 text-xs text-slate-500">
@@ -318,7 +536,7 @@ function MyImpact({ onNavigate }) {
                 </p>
 
                 <p className="text-2xl font-bold text-orange-800">
-                  {impact.streak} days
+                  {loading ? '—' : `${impact.streak} days`}
                 </p>
 
               </div>
@@ -328,18 +546,10 @@ function MyImpact({ onNavigate }) {
           </div>
 
 
-          {/* WEEKLY DOTS */}
+          {/* WEEKLY DOTS — real activity, from analysis timestamps */}
           <div className="mt-7 grid grid-cols-7 gap-2 sm:gap-4">
 
-            {[
-              { day: 'M', active: true },
-              { day: 'T', active: true },
-              { day: 'W', active: true },
-              { day: 'T', active: true },
-              { day: 'F', active: true },
-              { day: 'S', active: true },
-              { day: 'S', active: true },
-            ].map((item, index) => (
+            {impact.week.map((item, index) => (
 
               <div
                 key={`${item.day}-${index}`}
@@ -413,136 +623,21 @@ function MyImpact({ onNavigate }) {
 
           <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
 
-            {/* PLASTIC */}
-            <article className="rounded-2xl border border-green-100 bg-white p-5">
-
-              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-sky-100 text-sky-700">
-                <Recycle size={20} />
-              </span>
-
-              <p className="mt-5 text-sm text-slate-500">
-                Plastic
+            {!loading && impact.categoryBreakdown.length === 0 && (
+              <p className="text-sm text-slate-500 sm:col-span-2 lg:col-span-4">
+                No waste analyses yet — upload a photo to start building your
+                contribution breakdown.
               </p>
+            )}
 
-              <h3 className="mt-1 text-2xl font-bold">
-                {impact.plastic} kg
-              </h3>
-
-              <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100">
-
-                <div
-                  className="h-full rounded-full bg-sky-500"
-                  style={{
-                    width: `${(impact.plastic / impact.totalWaste) * 100}%`,
-                  }}
-                />
-
-              </div>
-
-              <p className="mt-2 text-xs text-slate-500">
-                Correctly sorted
-              </p>
-
-            </article>
-
-
-            {/* PAPER */}
-            <article className="rounded-2xl border border-green-100 bg-white p-5">
-
-              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-100 text-amber-700">
-                <Trash2 size={20} />
-              </span>
-
-              <p className="mt-5 text-sm text-slate-500">
-                Paper
-              </p>
-
-              <h3 className="mt-1 text-2xl font-bold">
-                {impact.paper} kg
-              </h3>
-
-              <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100">
-
-                <div
-                  className="h-full rounded-full bg-amber-500"
-                  style={{
-                    width: `${(impact.paper / impact.totalWaste) * 100}%`,
-                  }}
-                />
-
-              </div>
-
-              <p className="mt-2 text-xs text-slate-500">
-                Correctly sorted
-              </p>
-
-            </article>
-
-
-            {/* ORGANIC */}
-            <article className="rounded-2xl border border-green-100 bg-white p-5">
-
-              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-green-100 text-green-700">
-                <Sprout size={20} />
-              </span>
-
-              <p className="mt-5 text-sm text-slate-500">
-                Organic
-              </p>
-
-              <h3 className="mt-1 text-2xl font-bold">
-                {impact.organic} kg
-              </h3>
-
-              <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100">
-
-                <div
-                  className="h-full rounded-full bg-green-600"
-                  style={{
-                    width: `${(impact.organic / impact.totalWaste) * 100}%`,
-                  }}
-                />
-
-              </div>
-
-              <p className="mt-2 text-xs text-slate-500">
-                Correctly sorted
-              </p>
-
-            </article>
-
-
-            {/* OTHER */}
-            <article className="rounded-2xl border border-green-100 bg-white p-5">
-
-              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-slate-600">
-                <Trash2 size={20} />
-              </span>
-
-              <p className="mt-5 text-sm text-slate-500">
-                Other
-              </p>
-
-              <h3 className="mt-1 text-2xl font-bold">
-                {impact.other} kg
-              </h3>
-
-              <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100">
-
-                <div
-                  className="h-full rounded-full bg-slate-500"
-                  style={{
-                    width: `${(impact.other / impact.totalWaste) * 100}%`,
-                  }}
-                />
-
-              </div>
-
-              <p className="mt-2 text-xs text-slate-500">
-                Correctly sorted
-              </p>
-
-            </article>
+            {impact.categoryBreakdown.map(({ category, count }) => (
+              <CategoryBreakdownCard
+                key={category}
+                category={category}
+                count={count}
+                totalCount={impact.totalEntries}
+              />
+            ))}
 
           </div>
 
@@ -580,7 +675,7 @@ function MyImpact({ onNavigate }) {
               <div>
 
                 <p className="text-5xl font-bold text-green-700">
-                  {impact.ecoScore}
+                  {loading ? '—' : impact.ecoScore}
                   <span className="text-xl text-slate-400">
                     /100
                   </span>
@@ -647,7 +742,7 @@ function MyImpact({ onNavigate }) {
               <div>
 
                 <p className="text-5xl font-bold text-amber-700">
-                  {impact.greenPoints}
+                  {loading ? '—' : impact.greenPoints}
                 </p>
 
                 <p className="mt-2 text-sm text-slate-500">
@@ -659,7 +754,7 @@ function MyImpact({ onNavigate }) {
               <div className="text-right">
 
                 <p className="text-sm font-bold text-slate-700">
-                  {pointsRemaining}
+                  {loading ? '—' : pointsRemaining}
                 </p>
 
                 <p className="text-xs text-slate-500">
@@ -684,7 +779,7 @@ function MyImpact({ onNavigate }) {
             <p className="mt-4 text-sm leading-relaxed text-slate-600">
               You're only{' '}
               <strong className="text-slate-900">
-                {pointsRemaining} points away
+                {loading ? '—' : pointsRemaining} points away
               </strong>{' '}
               from your next milestone. Keep going — your next reward could be
               closer than you think.
@@ -750,17 +845,17 @@ function MyImpact({ onNavigate }) {
                 </p>
 
                 <p>
-                  Now you've handled{' '}
+                  Now you've logged{' '}
                   <strong className="text-green-700">
-                    {impact.totalWaste} kg
+                    {loading ? '—' : impact.totalEntries} waste categories
                   </strong>{' '}
-                  of waste, completed{' '}
+                  completed{' '}
                   <strong className="text-green-700">
-                    {impact.verifiedActions} verified actions
+                    {loading ? '—' : impact.stepsCompleted} disposal steps
                   </strong>{' '}
                   and built a{' '}
                   <strong className="text-green-700">
-                    {impact.streak}-day streak.
+                    {loading ? '—' : impact.streak}-day streak.
                   </strong>
                 </p>
 

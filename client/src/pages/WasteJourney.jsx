@@ -10,6 +10,18 @@ import {
   Trash2,
 } from 'lucide-react'
 
+const API_BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL ??
+  'http://localhost:8000/api/v1'
+).replace(/\/$/, '')
+
+function getAccessToken() {
+  return (
+    window.localStorage.getItem('wastewise_access_token') ||
+    window.sessionStorage.getItem('wastewise_access_token')
+  )
+}
+
 function getCategoryIcon(category) {
   const value = String(category).toLowerCase()
 
@@ -99,7 +111,11 @@ function WasteJourney({ onNavigate }) {
   const [currentStep, setCurrentStep] = useState(0)
   const [completed, setCompleted] = useState(false)
 
-  const analysis = useMemo(() => {
+  // FIX: was useMemo(() => ..., []) — read-only, could never reflect
+  // a saved step completion. Now useState with a lazy initializer:
+  // same "read sessionStorage exactly once" behavior, but updatable
+  // once the backend confirms a step was saved.
+  const [analysis, setAnalysis] = useState(() => {
     try {
       const stored =
         sessionStorage.getItem(
@@ -119,7 +135,7 @@ function WasteJourney({ onNavigate }) {
 
       return null
     }
-  }, [])
+  })
 
   const categories = analysis?.categories || []
 
@@ -136,17 +152,31 @@ function WasteJourney({ onNavigate }) {
         category.disposal_steps?.length
           ? category.disposal_steps
           : [
-              getRecommendation(
-                category.category
-              ),
+              // Fallback text only — no backend id, so this
+              // step can't be marked complete server-side.
+              { instruction: getRecommendation(category.category) },
             ]
 
-      steps.forEach((instruction) => {
+      steps.forEach((stepEntry) => {
+
+        // FIX: backend disposal_steps are objects
+        //   { id, step_number, instruction, is_completed, completed_at }
+        // not plain strings. Unwrap here instead of shoving the
+        // whole object into `instruction`.
+        const isStepObject =
+          typeof stepEntry === 'object' && stepEntry !== null
 
         result.push({
+          categoryId: category.id,
           category: category.category,
           items: category.items || [],
-          instruction,
+          stepId: isStepObject ? stepEntry.id : null,
+          instruction: isStepObject
+            ? stepEntry.instruction
+            : stepEntry,
+          isCompleted: isStepObject
+            ? Boolean(stepEntry.is_completed)
+            : false,
         })
 
       })
@@ -156,7 +186,73 @@ function WasteJourney({ onNavigate }) {
   }, [categories])
 
   // ---------------------------------------------------------
+  // SAVE STEP COMPLETION TO THE BACKEND
+  //
+  // Previously this page never called the API — "Next
+  // Recommendation" only advanced local state, so is_completed
+  // in the database never changed. This persists it.
+  // ---------------------------------------------------------
+
+  const markStepComplete = async (stepEntry) => {
+
+    if (
+      !stepEntry?.stepId ||
+      !stepEntry?.categoryId ||
+      !analysis?.id
+    ) {
+      // Fallback-text step with no backend id, or no analysis
+      // loaded yet — nothing to persist.
+      return
+    }
+
+    const accessToken = getAccessToken()
+
+    if (!accessToken) {
+      return
+    }
+
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/waste/${analysis.id}/categories/${stepEntry.categoryId}/steps/${stepEntry.stepId}`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            is_completed: true,
+          }),
+        }
+      )
+
+      if (response.ok) {
+        const updated = await response.json()
+
+        setAnalysis(updated)
+
+        sessionStorage.setItem(
+          'wastewise_analysis',
+          JSON.stringify(updated)
+        )
+      }
+    } catch (error) {
+      console.error(
+        'Unable to save step completion:',
+        error
+      )
+      // Non-blocking on purpose: a flaky connection here
+      // shouldn't stop the user from moving through the journey.
+    }
+  }
+
+  // ---------------------------------------------------------
   // SUSTAINABILITY SCORE
+  //
+  // NOTE: this is a client-side heuristic based on category
+  // type, not a value the backend calculates or stores. Same
+  // status as the rewards mock on the Dashboard — fine as a
+  // placeholder, just not backed by real data yet.
   // ---------------------------------------------------------
 
   const sustainabilityScore = useMemo(() => {
@@ -314,7 +410,10 @@ function WasteJourney({ onNavigate }) {
   const StepIcon =
     getCategoryIcon(step?.category)
 
-  const handleNext = () => {
+  const handleNext = async () => {
+
+    // Persist the step the user is leaving before advancing.
+    await markStepComplete(step)
 
     if (
       currentStep <

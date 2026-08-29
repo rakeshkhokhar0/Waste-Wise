@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -13,10 +13,19 @@ import {
   Leaf,
   LogOut,
   Recycle,
-  Sprout,
   Stethoscope,
   Trash2,
 } from 'lucide-react'
+import { getCategoryMeta, formatRelativeDate } from '../utils/wasteCategory'
+
+// ------------------------------------------------------------
+// NOTE ON REWARDS
+//
+// There is no rewards/points model anywhere in the backend
+// (no route, no table). This section is still mock data on
+// purpose — wire it up once that feature exists on the
+// server. Everything else on this page is now dynamic.
+// ------------------------------------------------------------
 
 const rewards = [
   {
@@ -57,40 +66,17 @@ const rewards = [
   },
 ]
 
-const activity = [
-  {
-    icon: Recycle,
-    type: 'Plastic',
-    amount: '1.2 kg',
-    action: 'Recycled',
-    points: '+36 Green Points',
-    date: 'Today',
-    color: 'bg-sky-100 text-sky-700',
-  },
-  {
-    icon: Sprout,
-    type: 'Organic',
-    amount: '2.5 kg',
-    action: 'Composted',
-    points: '+50 Green Points',
-    date: 'Yesterday',
-    color: 'bg-green-100 text-green-700',
-  },
-  {
-    icon: Trash2,
-    type: 'Paper',
-    amount: '0.8 kg',
-    action: 'Recycled',
-    points: '+24 Green Points',
-    date: '2 days ago',
-    color: 'bg-amber-100 text-amber-700',
-  },
-]
-
 const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL ??
   'http://localhost:8000/api/v1'
 ).replace(/\/$/, '')
+
+function getAccessToken() {
+  return (
+    window.localStorage.getItem('wastewise_access_token') ||
+    window.sessionStorage.getItem('wastewise_access_token')
+  )
+}
 
 function Dashboard({ onNavigate, onLogout }) {
   const inputRef = useRef(null)
@@ -100,11 +86,109 @@ function Dashboard({ onNavigate, onLogout }) {
   const [uploadError, setUploadError] = useState('')
   const [rewardIndex, setRewardIndex] = useState(0)
 
-  const username =
-    window.localStorage.getItem('wastewise_username') || 'User'
+  // ---------------------------------------------------------
+  // DYNAMIC DATA
+  // ---------------------------------------------------------
 
-  const usernameInitial =
-    username.charAt(0).toUpperCase()
+  const [profile, setProfile] = useState(null)
+  const [recentAnalyses, setRecentAnalyses] = useState([])
+  const [stats, setStats] = useState({
+    totalAnalyses: 0,
+    categoriesDetected: 0,
+    stepsCompleted: 0,
+    stepsTotal: 0,
+  })
+  const [dashboardLoading, setDashboardLoading] = useState(true)
+  const [dashboardError, setDashboardError] = useState('')
+
+  useEffect(() => {
+    const loadDashboard = async () => {
+      const accessToken = getAccessToken()
+
+      if (!accessToken) {
+        setDashboardLoading(false)
+        return
+      }
+
+      const authHeaders = { Authorization: `Bearer ${accessToken}` }
+
+      try {
+        const [profileResponse, historyResponse] = await Promise.all([
+          fetch(`${API_BASE_URL}/users/me`, { headers: authHeaders }),
+          fetch(
+            `${API_BASE_URL}/waste/history?page=1&page_size=50`,
+            { headers: authHeaders }
+          ),
+        ])
+
+        // Session expired / invalid token — send them back to login.
+        if (profileResponse.status === 401 || historyResponse.status === 401) {
+          onLogout?.()
+          return
+        }
+
+        if (profileResponse.ok) {
+          const profileData = await profileResponse.json()
+          setProfile(profileData)
+
+          if (profileData?.user_name) {
+            window.localStorage.setItem(
+              'wastewise_username',
+              profileData.user_name
+            )
+          }
+        }
+
+        if (historyResponse.ok) {
+          const historyData = await historyResponse.json()
+          const items = historyData.items || []
+
+          // Most recent 3 for the activity feed.
+          setRecentAnalyses(items.slice(0, 3))
+
+          // Aggregate stats across every analysis on this page.
+          const uniqueCategories = new Set(
+            items.flatMap((analysis) =>
+              (analysis.categories || []).map((c) => c.category)
+            )
+          )
+
+          const stepsCompleted = items.reduce(
+            (sum, analysis) => sum + (analysis.completed_steps || 0),
+            0
+          )
+
+          const stepsTotal = items.reduce(
+            (sum, analysis) => sum + (analysis.total_steps || 0),
+            0
+          )
+
+          setStats({
+            totalAnalyses: historyData.total ?? items.length,
+            categoriesDetected: uniqueCategories.size,
+            stepsCompleted,
+            stepsTotal,
+          })
+        }
+      } catch (err) {
+        console.error('Dashboard load error:', err)
+        setDashboardError(
+          'Some dashboard data could not be loaded right now.'
+        )
+      } finally {
+        setDashboardLoading(false)
+      }
+    }
+
+    loadDashboard()
+  }, [])
+
+  const username =
+    profile?.user_name ||
+    window.localStorage.getItem('wastewise_username') ||
+    'User'
+
+  const usernameInitial = username.charAt(0).toUpperCase()
 
   const reward = rewards[rewardIndex]
   const RewardIcon = reward.icon
@@ -118,6 +202,11 @@ function Dashboard({ onNavigate, onLogout }) {
     reward.requiredPoints - reward.currentPoints,
     0
   )
+
+  const overallStepsProgress =
+    stats.stepsTotal > 0
+      ? Math.round((stats.stepsCompleted / stats.stepsTotal) * 100)
+      : 0
 
   // ---------------------------------------------------------
   // Compress image before temporarily storing it.
@@ -381,6 +470,12 @@ function Dashboard({ onNavigate, onLogout }) {
 
       <div className="mx-auto max-w-7xl px-6 py-10 lg:px-10">
 
+        {dashboardError && (
+          <div className="mb-6 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-700">
+            {dashboardError}
+          </div>
+        )}
+
         {/* WELCOME */}
 
         <section>
@@ -517,7 +612,7 @@ function Dashboard({ onNavigate, onLogout }) {
 
         </section>
 
-        {/* REWARDS */}
+        {/* REWARDS — still mock data, see note at top of file */}
 
         <section className="mt-7 overflow-hidden rounded-2xl border border-amber-100 bg-[#fffaf0] p-5 shadow-sm sm:p-7">
 
@@ -653,7 +748,7 @@ function Dashboard({ onNavigate, onLogout }) {
 
         </section>
 
-        {/* IMPACT */}
+        {/* IMPACT — now computed from GET /waste/history */}
 
         <section className="mt-10">
 
@@ -686,30 +781,32 @@ function Dashboard({ onNavigate, onLogout }) {
 
             {[
               {
-                label: 'Total waste',
-                value: '12.5 kg',
-                note: 'This month',
+                label: 'Total analyses',
+                value: dashboardLoading ? '—' : String(stats.totalAnalyses),
+                note: 'Waste images analyzed',
                 icon: Trash2,
                 color: 'text-slate-600 bg-slate-100',
               },
               {
-                label: 'Waste recycled',
-                value: '7.2 kg',
-                note: '58% of total waste',
+                label: 'Categories detected',
+                value: dashboardLoading ? '—' : String(stats.categoriesDetected),
+                note: 'Distinct waste types found',
                 icon: Recycle,
                 color: 'text-sky-700 bg-sky-100',
               },
               {
-                label: 'Sustainability score',
-                value: '82 / 100',
-                note: 'Great progress!',
+                label: 'Disposal steps done',
+                value: dashboardLoading
+                  ? '—'
+                  : `${stats.stepsCompleted}/${stats.stepsTotal}`,
+                note: `${overallStepsProgress}% complete`,
                 icon: Leaf,
                 color: 'text-green-700 bg-green-100',
               },
               {
                 label: 'Green points',
                 value: '340',
-                note: '160 to next reward',
+                note: 'Coming soon — rewards not live yet',
                 icon: Award,
                 color: 'text-amber-700 bg-amber-100',
               },
@@ -754,7 +851,7 @@ function Dashboard({ onNavigate, onLogout }) {
 
         </section>
 
-        {/* ACTIVITY */}
+        {/* ACTIVITY — now real recent analyses from GET /waste/history */}
 
         <section className="mt-10 pb-10">
 
@@ -776,64 +873,84 @@ function Dashboard({ onNavigate, onLogout }) {
 
           <div className="mt-5 overflow-hidden rounded-2xl border border-green-100 bg-white">
 
-            {activity.map(
-              ({
-                icon: Icon,
-                type,
-                amount,
-                action,
-                points,
-                date,
-                color,
-              }) => (
+            {dashboardLoading && (
+              <div className="p-8 text-center text-sm text-slate-500">
+                Loading your activity...
+              </div>
+            )}
 
-                <div
-                  key={type}
-                  className="flex items-center justify-between gap-4 border-b border-slate-100 p-5 last:border-0"
-                >
+            {!dashboardLoading && recentAnalyses.length === 0 && (
+              <div className="p-8 text-center text-sm text-slate-500">
+                No waste analyses yet. Upload a photo above to get started.
+              </div>
+            )}
 
-                  <div className="flex items-center gap-3">
+            {!dashboardLoading &&
+              recentAnalyses.map((analysis) => {
+                const primaryCategory = analysis.categories?.[0]?.category
+                const meta = getCategoryMeta(primaryCategory)
+                const Icon = meta.icon
 
-                    <span
-                      className={`flex h-10 w-10 items-center justify-center rounded-xl ${color}`}
-                    >
-                      <Icon size={19} />
-                    </span>
+                const categoryLabel =
+                  analysis.categories
+                    ?.map((c) => getCategoryMeta(c.category).label)
+                    .join(', ') || 'Waste'
 
-                    <div>
+                return (
+                  <div
+                    key={analysis.id}
+                    onClick={() => {
+                      sessionStorage.setItem(
+                        'wastewise_analysis',
+                        JSON.stringify(analysis)
+                      )
+                      onNavigate('/waste-journey')
+                    }}
+                    className="flex cursor-pointer items-center justify-between gap-4 border-b border-slate-100 p-5 transition last:border-0 hover:bg-slate-50"
+                  >
 
-                      <h3 className="font-semibold">
-                        {type}
-                      </h3>
+                    <div className="flex items-center gap-3">
 
-                      <p className="text-sm text-slate-500">
-                        {date}
+                      <span
+                        className={`flex h-10 w-10 items-center justify-center rounded-xl ${meta.color}`}
+                      >
+                        <Icon size={19} />
+                      </span>
+
+                      <div>
+
+                        <h3 className="font-semibold">
+                          {categoryLabel}
+                        </h3>
+
+                        <p className="text-sm text-slate-500">
+                          {formatRelativeDate(analysis.created_at)}
+                        </p>
+
+                      </div>
+
+                    </div>
+
+                    <div className="hidden text-right sm:block">
+
+                      <strong className="text-sm">
+                        {analysis.completed_steps}/{analysis.total_steps} steps
+                      </strong>
+
+                      <p className="text-xs font-semibold text-amber-600">
+                        {Math.round(analysis.progress_percentage || 0)}% done
                       </p>
 
                     </div>
 
-                  </div>
-
-                  <div className="hidden text-right sm:block">
-
-                    <strong className="text-sm">
-                      {amount}
-                    </strong>
-
-                    <p className="text-xs font-semibold text-amber-600">
-                      {points}
-                    </p>
+                    <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-semibold capitalize text-green-700">
+                      {analysis.status.replace(/_/g, ' ')}
+                    </span>
 
                   </div>
 
-                  <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-semibold text-green-700">
-                    {action}
-                  </span>
-
-                </div>
-
-              )
-            )}
+                )
+              })}
 
           </div>
 
