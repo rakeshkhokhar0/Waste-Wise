@@ -1,4 +1,4 @@
-# server/app/modules/waste/models.py
+# app/modules/waste/models.py
 
 import enum
 import uuid
@@ -12,17 +12,16 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
-    JSON,
     Numeric,
     String,
     Text,
+    JSON,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from server.app.database.base import Base
 from server.app.modules.user.models.user_model import User
-
 
 if TYPE_CHECKING:
     from server.app.modules.rewards.models import RewardTransaction
@@ -34,6 +33,10 @@ if TYPE_CHECKING:
 
 
 class WasteAnalysisStatus(str, enum.Enum):
+    """
+    Represents the lifecycle of a waste analysis.
+    """
+
     PENDING = "pending"
     ANALYZING = "analyzing"
     ANALYZED = "analyzed"
@@ -43,6 +46,10 @@ class WasteAnalysisStatus(str, enum.Enum):
 
 
 class WasteCategory(str, enum.Enum):
+    """
+    Categories used for disposal and reward calculation.
+    """
+
     RECYCLABLE = "recyclable"
     ORGANIC = "organic"
     E_WASTE = "e_waste"
@@ -57,6 +64,13 @@ class WasteCategory(str, enum.Enum):
 
 
 class WasteAnalysis(Base):
+    """
+    Stores one complete waste-image analysis.
+
+    One user can have many analyses.
+    One analysis can contain multiple waste categories.
+    """
+
     __tablename__ = "waste_analyses"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -101,6 +115,10 @@ class WasteAnalysis(Base):
         nullable=False,
     )
 
+    # --------------------------------------------------------
+    # Relationships
+    # --------------------------------------------------------
+
     user: Mapped["User"] = relationship(
         "User",
         back_populates="waste_analyses",
@@ -114,8 +132,9 @@ class WasteAnalysis(Base):
         order_by="WasteCategoryResult.created_at",
     )
 
-    # Rewards module relationship.
-    # Rewards owns the reward data; Waste only exposes the relationship.
+    # NEW: reciprocal side of RewardTransaction.waste_analysis
+    # (back_populates="waste_analysis"). Analysis-level and
+    # analysis-completion-bonus transactions reference this.
     reward_transactions: Mapped[list["RewardTransaction"]] = relationship(
         "RewardTransaction",
         back_populates="waste_analysis",
@@ -136,6 +155,20 @@ class WasteAnalysis(Base):
 
 
 class WasteCategoryResult(Base):
+    """
+    Represents one waste category detected inside an analysis.
+
+    Example:
+
+        Analysis #1
+            ├── RECYCLABLE
+            ├── ORGANIC
+            └── E_WASTE
+
+    The `items` field stores the individual objects detected
+    within that category.
+    """
+
     __tablename__ = "waste_category_results"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -158,12 +191,26 @@ class WasteCategoryResult(Base):
         index=True,
     )
 
+    # Example:
+    #
+    # [
+    #     "plastic bottle",
+    #     "newspaper",
+    #     "aluminium can"
+    # ]
+    #
     items: Mapped[list] = mapped_column(
         JSON,
         nullable=False,
         default=list,
     )
 
+    # AI confidence for this category result.
+    #
+    # Example:
+    # 0.96
+    #
+    # Stored as DECIMAL to avoid floating-point precision issues.
     confidence: Mapped[float | None] = mapped_column(
         Numeric(5, 4),
         nullable=True,
@@ -182,6 +229,10 @@ class WasteCategoryResult(Base):
         nullable=False,
     )
 
+    # --------------------------------------------------------
+    # Relationships
+    # --------------------------------------------------------
+
     waste_analysis: Mapped["WasteAnalysis"] = relationship(
         "WasteAnalysis",
         back_populates="category_results",
@@ -195,9 +246,11 @@ class WasteCategoryResult(Base):
         order_by="DisposalStep.step_number",
     )
 
-    reward_transactions: Mapped[
-        list["RewardTransaction"]
-    ] = relationship(
+    # NEW: reciprocal side of RewardTransaction
+    # .waste_category_result (back_populates=
+    # "waste_category_result"). Category-completion bonuses
+    # reference this.
+    reward_transactions: Mapped[list["RewardTransaction"]] = relationship(
         "RewardTransaction",
         back_populates="waste_category_result",
     )
@@ -217,6 +270,17 @@ class WasteCategoryResult(Base):
 
 
 class DisposalStep(Base):
+    """
+    Stores individual disposal instructions for a waste category.
+
+    Example:
+
+        RECYCLABLE
+            Step 1 -> Separate recyclable materials
+            Step 2 -> Clean recyclable containers
+            Step 3 -> Put them in recycling collection
+    """
+
     __tablename__ = "disposal_steps"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -267,13 +331,18 @@ class DisposalStep(Base):
         nullable=False,
     )
 
+    # --------------------------------------------------------
+    # Relationships
+    # --------------------------------------------------------
+
     waste_category_result: Mapped["WasteCategoryResult"] = relationship(
         "WasteCategoryResult",
         back_populates="disposal_steps",
     )
 
-    # Rewards module relationship.
-    # Reward information remains inside the Rewards module.
+    # NEW: reciprocal side of RewardTransaction.disposal_step
+    # (back_populates="disposal_step"). Per-step reward
+    # transactions reference this.
     reward_transactions: Mapped[list["RewardTransaction"]] = relationship(
         "RewardTransaction",
         back_populates="disposal_step",

@@ -3,28 +3,27 @@ import {
   ArrowLeft,
   ArrowRight,
   Award,
-  Bell,
   BookOpen,
   Camera,
   ChevronRight,
   Coffee,
   Dumbbell,
   ImageUp,
-  Leaf,
-  LogOut,
   Recycle,
   Stethoscope,
   Trash2,
+  Leaf,
 } from 'lucide-react'
+import Navbar from '../components/Navbar'
 import { getCategoryMeta, formatRelativeDate } from '../utils/wasteCategory'
 
 // ------------------------------------------------------------
-// NOTE ON REWARDS
+// NOTE ON REWARDS CAROUSEL
 //
-// There is no rewards/points model anywhere in the backend
-// (no route, no table). This section is still mock data on
-// purpose — wire it up once that feature exists on the
-// server. Everything else on this page is now dynamic.
+// The marketplace/redemption side (which partner rewards exist,
+// how many are "available") still has no backend model — this
+// card stays mock. Green Points itself is now real, pulled from
+// GET /rewards/me.
 // ------------------------------------------------------------
 
 const rewards = [
@@ -78,7 +77,7 @@ function getAccessToken() {
   )
 }
 
-function Dashboard({ onNavigate, onLogout }) {
+function Dashboard({ onNavigate }) {
   const inputRef = useRef(null)
 
   const [image, setImage] = useState(null)
@@ -98,6 +97,7 @@ function Dashboard({ onNavigate, onLogout }) {
     stepsCompleted: 0,
     stepsTotal: 0,
   })
+  const [rewardSummary, setRewardSummary] = useState(null) // { total_points, total_earned, total_transactions }
   const [dashboardLoading, setDashboardLoading] = useState(true)
   const [dashboardError, setDashboardError] = useState('')
 
@@ -113,17 +113,27 @@ function Dashboard({ onNavigate, onLogout }) {
       const authHeaders = { Authorization: `Bearer ${accessToken}` }
 
       try {
-        const [profileResponse, historyResponse] = await Promise.all([
-          fetch(`${API_BASE_URL}/users/me`, { headers: authHeaders }),
-          fetch(
-            `${API_BASE_URL}/waste/history?page=1&page_size=50`,
-            { headers: authHeaders }
-          ),
-        ])
+        const [profileResponse, historyResponse, rewardResponse] =
+          await Promise.all([
+            fetch(`${API_BASE_URL}/users/me`, { headers: authHeaders }),
+            fetch(
+              `${API_BASE_URL}/waste/history?page=1&page_size=50`,
+              { headers: authHeaders }
+            ),
+            fetch(`${API_BASE_URL}/rewards/me`, { headers: authHeaders }),
+          ])
 
         // Session expired / invalid token — send them back to login.
-        if (profileResponse.status === 401 || historyResponse.status === 401) {
-          onLogout?.()
+        // (No onLogout prop needed — Navbar owns the full logout
+        // flow now; this is just a redirect for an already-expired
+        // session, nothing left to clean up that Navbar wouldn't
+        // already have cleared on the way here.)
+        if (
+          profileResponse.status === 401 ||
+          historyResponse.status === 401 ||
+          rewardResponse.status === 401
+        ) {
+          onNavigate('/login')
           return
         }
 
@@ -170,6 +180,14 @@ function Dashboard({ onNavigate, onLogout }) {
             stepsTotal,
           })
         }
+
+        // Rewards endpoint depends on the reward-service wiring —
+        // if it's not deployed yet this just silently stays null
+        // and the card below falls back to a loading dash.
+        if (rewardResponse.ok) {
+          const rewardData = await rewardResponse.json()
+          setRewardSummary(rewardData)
+        }
       } catch (err) {
         console.error('Dashboard load error:', err)
         setDashboardError(
@@ -187,8 +205,6 @@ function Dashboard({ onNavigate, onLogout }) {
     profile?.user_name ||
     window.localStorage.getItem('wastewise_username') ||
     'User'
-
-  const usernameInitial = username.charAt(0).toUpperCase()
 
   const reward = rewards[rewardIndex]
   const RewardIcon = reward.icon
@@ -351,120 +367,10 @@ function Dashboard({ onNavigate, onLogout }) {
     )
   }
 
-  // ---------------------------------------------------------
-  // LOGOUT
-  // ---------------------------------------------------------
-
-  const handleLogout = () => {
-    window.localStorage.removeItem(
-      'wastewise_access_token'
-    )
-
-    window.localStorage.removeItem(
-      'wastewise_refresh_token'
-    )
-
-    window.localStorage.removeItem(
-      'wastewise_username'
-    )
-
-    sessionStorage.removeItem(
-      'wastewise_uploaded_image'
-    )
-
-    sessionStorage.removeItem(
-      'wastewise_analysis'
-    )
-
-    onLogout?.()
-  }
-
   return (
     <main className="min-h-screen bg-[#f5f8f3] text-slate-900">
 
-      {/* HEADER */}
-
-      <header className="border-b border-green-100 bg-white">
-
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-5 px-6 py-4 lg:px-10">
-
-          <button
-            type="button"
-            onClick={() => onNavigate('/dashboard')}
-            className="flex items-center gap-2 text-xl font-bold text-green-800"
-          >
-            <Leaf size={23} />
-            WasteWise
-          </button>
-
-          <nav className="hidden items-center gap-6 text-sm font-semibold text-slate-500 md:flex">
-
-            <button
-              type="button"
-              onClick={() => onNavigate('/dashboard')}
-              className="text-green-700"
-            >
-              Home
-            </button>
-
-            <button type="button">
-              My activity
-            </button>
-
-            <button
-              type="button"
-              onClick={() => onNavigate('/marketplace')}
-            >
-              MarketPlace
-            </button>
-
-            <button
-              type="button"
-              onClick={() => onNavigate('/my-impact')}
-            >
-              My impact
-            </button>
-
-          </nav>
-
-          <div className="flex items-center gap-3">
-
-            <button
-              type="button"
-              className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"
-            >
-              <Bell size={20} />
-            </button>
-
-            <div className="flex items-center gap-2 rounded-full bg-green-50 py-1.5 pl-1.5 pr-3">
-
-              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-green-700 text-sm font-bold text-white">
-                {usernameInitial}
-              </span>
-
-              <span className="hidden text-sm font-semibold sm:block">
-                {username}
-              </span>
-
-            </div>
-
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="flex items-center gap-2 rounded-lg border border-green-200 px-3 py-2 text-sm font-semibold text-green-800 transition hover:bg-green-50"
-            >
-              <LogOut size={17} />
-
-              <span className="hidden sm:inline">
-                Logout
-              </span>
-            </button>
-
-          </div>
-
-        </div>
-
-      </header>
+      <Navbar activePath="dashboard" onNavigate={onNavigate} />
 
       {/* MAIN */}
 
@@ -612,7 +518,7 @@ function Dashboard({ onNavigate, onLogout }) {
 
         </section>
 
-        {/* REWARDS — still mock data, see note at top of file */}
+        {/* REWARDS — marketplace side still mock, see note at top of file */}
 
         <section className="mt-7 overflow-hidden rounded-2xl border border-amber-100 bg-[#fffaf0] p-5 shadow-sm sm:p-7">
 
@@ -748,7 +654,7 @@ function Dashboard({ onNavigate, onLogout }) {
 
         </section>
 
-        {/* IMPACT — now computed from GET /waste/history */}
+        {/* IMPACT — now computed from GET /waste/history + GET /rewards/me */}
 
         <section className="mt-10">
 
@@ -805,8 +711,14 @@ function Dashboard({ onNavigate, onLogout }) {
               },
               {
                 label: 'Green points',
-                value: '340',
-                note: 'Coming soon — rewards not live yet',
+                value:
+                  dashboardLoading || !rewardSummary
+                    ? '—'
+                    : String(rewardSummary.total_points),
+                note:
+                  dashboardLoading || !rewardSummary
+                    ? 'Loading...'
+                    : `Lifetime earned: ${rewardSummary.total_earned}`,
                 icon: Award,
                 color: 'text-amber-700 bg-amber-100',
               },
@@ -868,6 +780,15 @@ function Dashboard({ onNavigate, onLogout }) {
               </h2>
 
             </div>
+
+            <button
+              type="button"
+              onClick={() => onNavigate('/my-activity')}
+              className="hidden items-center gap-1 text-sm font-semibold text-green-700 sm:flex"
+            >
+              View all activity
+              <ChevronRight size={16} />
+            </button>
 
           </div>
 
