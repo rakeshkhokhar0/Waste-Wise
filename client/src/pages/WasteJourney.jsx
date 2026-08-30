@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   AlertCircle,
   ArrowRight,
@@ -7,6 +7,7 @@ import {
   Trash2,
   Trophy,
 } from 'lucide-react'
+import Navbar from '../components/Navbar'
 import WasteCategoryCard from '../components/WasteCategoryCard'
 
 const API_BASE_URL = (
@@ -25,10 +26,7 @@ function WasteJourney({ onNavigate }) {
   const [analysis, setAnalysis] = useState(() => {
     try {
       const stored = sessionStorage.getItem('wastewise_analysis')
-
-      if (!stored) return null
-
-      return JSON.parse(stored)
+      return stored ? JSON.parse(stored) : null
     } catch (error) {
       console.error('Unable to read AI analysis:', error)
       return null
@@ -39,15 +37,16 @@ function WasteJourney({ onNavigate }) {
   const [updatingStepId, setUpdatingStepId] = useState(null)
   const [error, setError] = useState('')
 
+  // Expand first category automatically when loaded
+  useEffect(() => {
+    if (analysis?.categories?.length > 0 && !expandedCategoryId) {
+      setExpandedCategoryId(analysis.categories[0].id)
+    }
+  }, [analysis])
+
   const categories = analysis?.categories || []
 
-  // ---------------------------------------------------------
-  // TOGGLE A DISPOSAL STEP FOR ONE CATEGORY
-  //
-  // Each category is independent now — checking a step in
-  // "Organic" only ever touches Organic's own progress.
-  // ---------------------------------------------------------
-
+  // Toggle step completion with server sync
   const toggleStep = async (category, step) => {
     const accessToken = getAccessToken()
 
@@ -77,9 +76,6 @@ function WasteJourney({ onNavigate }) {
         throw new Error(data?.detail || 'Unable to update that step.')
       }
 
-      // Backend recalculates every category's progress and the
-      // overall totals server-side — just swap in the fresh
-      // response rather than patching state by hand.
       setAnalysis(data)
       sessionStorage.setItem('wastewise_analysis', JSON.stringify(data))
     } catch (err) {
@@ -90,26 +86,11 @@ function WasteJourney({ onNavigate }) {
     }
   }
 
-  // ---------------------------------------------------------
-  // NO ANALYSIS
-  // ---------------------------------------------------------
-
+  // Fallback when no analysis is active
   if (!analysis || !categories.length) {
     return (
       <main className="min-h-screen bg-[#f5f8f3] text-slate-900">
-
-        <header className="border-b border-green-100 bg-white">
-          <div className="mx-auto max-w-7xl px-6 py-4 lg:px-10">
-            <button
-              type="button"
-              onClick={() => onNavigate('/dashboard')}
-              className="flex items-center gap-2 text-xl font-bold text-green-800"
-            >
-              <Leaf size={23} />
-              WasteWise
-            </button>
-          </div>
-        </header>
+        <Navbar activePath="dashboard" onNavigate={onNavigate} />
 
         <div className="mx-auto max-w-2xl px-6 py-16 text-center">
           <div className="rounded-3xl border border-green-100 bg-white p-10 shadow-sm">
@@ -122,13 +103,12 @@ function WasteJourney({ onNavigate }) {
             <button
               type="button"
               onClick={() => onNavigate('/dashboard')}
-              className="mt-6 rounded-xl bg-green-700 px-6 py-3 font-semibold text-white"
+              className="mt-6 rounded-xl bg-green-700 px-6 py-3 font-semibold text-white transition hover:bg-green-800"
             >
               Upload Waste Image
             </button>
           </div>
         </div>
-
       </main>
     )
   }
@@ -136,48 +116,21 @@ function WasteJourney({ onNavigate }) {
   const totalSteps = analysis.total_steps || 0
   const completedSteps = analysis.completed_steps || 0
   const overallProgress = Math.round(analysis.progress_percentage || 0)
-
   const isFullyComplete = totalSteps > 0 && completedSteps === totalSteps
-
-  // ---------------------------------------------------------
-  // ACTIVE JOURNEY
-  // ---------------------------------------------------------
 
   return (
     <main className="min-h-screen bg-[#f5f8f3] text-slate-900">
-
-      <header className="border-b border-green-100 bg-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4 lg:px-10">
-
-          <button
-            type="button"
-            onClick={() => onNavigate('/dashboard')}
-            className="flex items-center gap-2 text-xl font-bold text-green-800"
-          >
-            <Leaf size={23} />
-            WasteWise
-          </button>
-
-          <div className="rounded-full bg-green-50 px-4 py-2 text-sm font-semibold text-green-800">
-            AI Waste Journey
-          </div>
-
-        </div>
-      </header>
+      <Navbar activePath="dashboard" onNavigate={onNavigate} />
 
       <div className="mx-auto max-w-6xl px-6 py-10 lg:px-10">
-
-        {/* HEADER */}
-
+        {/* HEADER SECTION */}
         <section>
           <p className="text-xs font-bold tracking-[0.18em] text-green-700">
             PERSONALIZED BY WASTEWISE AI
           </p>
 
           <h1 className="mt-2 text-3xl font-bold sm:text-4xl">
-            {isFullyComplete
-              ? 'All done — nice work!'
-              : 'Your disposal plan'}
+            {isFullyComplete ? 'All done — nice work!' : 'Your disposal plan'}
           </h1>
 
           <p className="mt-3 max-w-2xl leading-relaxed text-slate-600">
@@ -185,7 +138,7 @@ function WasteJourney({ onNavigate }) {
               'These instructions were generated from the actual waste detected in your uploaded image. Tap a category below to see its steps.'}
           </p>
 
-          {/* Overall progress across every category */}
+          {/* Progress Bar */}
           <div className="mt-6 max-w-xl">
             <div className="flex items-center justify-between text-xs font-semibold text-slate-600">
               <span>Overall progress</span>
@@ -209,9 +162,7 @@ function WasteJourney({ onNavigate }) {
           </div>
         )}
 
-        {/* CATEGORY CARDS — each one independent: expand, check
-            off its own steps, collapse, move to the next one. */}
-
+        {/* CATEGORY CHECKLIST CARDS */}
         <section className="mt-8 space-y-4">
           {categories.map((category) => (
             <WasteCategoryCard
@@ -229,8 +180,7 @@ function WasteJourney({ onNavigate }) {
           ))}
         </section>
 
-        {/* PLACES */}
-
+        {/* NEARBY DISPOSAL FACILITIES */}
         <div className="mt-6 rounded-2xl border border-green-100 bg-[#f8fbf6] p-6">
           <div className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-green-100 text-green-700">
@@ -266,10 +216,7 @@ function WasteJourney({ onNavigate }) {
           </button>
         </div>
 
-        {/* COMPLETE — only appears once every category's steps
-            are checked off. Points at Dashboard for now since
-            there's no dedicated "My Activity" route yet. */}
-
+        {/* COMPLETION BANNER */}
         {isFullyComplete ? (
           <div className="mt-8 overflow-hidden rounded-3xl bg-gradient-to-br from-green-800 to-emerald-600 p-8 text-center text-white">
             <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-white/15">
@@ -287,7 +234,7 @@ function WasteJourney({ onNavigate }) {
 
             <button
               type="button"
-              onClick={() => onNavigate('/dashboard')}
+              onClick={() => onNavigate('/my-activity')}
               className="mx-auto mt-6 flex items-center justify-center gap-2 rounded-xl bg-white px-6 py-3 font-bold text-green-800 transition hover:bg-green-50"
             >
               Complete &amp; View My Activity
@@ -305,9 +252,7 @@ function WasteJourney({ onNavigate }) {
             </button>
           </div>
         )}
-
       </div>
-
     </main>
   )
 }
