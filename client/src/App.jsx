@@ -7,7 +7,7 @@ import Dashboard from './pages/Dashboard'
 import Marketplace from './pages/MarketPlace'
 import RewardDetail from './pages/RewardDetail'
 import MyImpact from './pages/MyImpact'
-import MyActivity from './pages/MyActivity'
+import MyActivity from './pages/Myactivity'
 import WasteClassification from './pages/WasteClassification'
 import WasteJourney from './pages/WasteJourney'
 

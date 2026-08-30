@@ -13,8 +13,7 @@ import {
 } from 'lucide-react'
 
 const API_BASE_URL = (
-  import.meta.env.VITE_API_BASE_URL ??
-  'http://localhost:8000/api/v1'
+  import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1'
 ).replace(/\/$/, '')
 
 const NAV_ITEMS = [
@@ -67,7 +66,6 @@ function Navbar({ onNavigate, activePath }) {
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
 
-  // Fetch current user details
   useEffect(() => {
     const accessToken = getAccessToken()
     if (!accessToken) return
@@ -87,13 +85,18 @@ function Navbar({ onNavigate, activePath }) {
       .catch((err) => console.error('Navbar profile fetch error:', err))
   }, [])
 
-  // Close dropdowns on outside click
   useEffect(() => {
     const handleOutsideClick = (e) => {
-      if (!e.target.closest('#user-menu-button') && !e.target.closest('#user-menu-dropdown')) {
+      if (
+        !e.target.closest('#user-menu-button') &&
+        !e.target.closest('#user-menu-dropdown')
+      ) {
         setProfileDropdownOpen(false)
       }
-      if (!e.target.closest('#notifications-button') && !e.target.closest('#notifications-dropdown')) {
+      if (
+        !e.target.closest('#notifications-button') &&
+        !e.target.closest('#notifications-dropdown')
+      ) {
         setNotificationsOpen(false)
       }
     }
@@ -103,7 +106,6 @@ function Navbar({ onNavigate, activePath }) {
 
   const usernameInitial = username.charAt(0).toUpperCase()
 
-  // Full-featured logout workflow
   const handleLogout = async () => {
     const refreshToken = getRefreshToken()
 
@@ -118,7 +120,6 @@ function Navbar({ onNavigate, activePath }) {
     } catch (err) {
       console.error('Logout error:', err)
     } finally {
-      // Clear token and user storage
       for (const storage of [window.localStorage, window.sessionStorage]) {
         storage.removeItem('wastewise_access_token')
         storage.removeItem('wastewise_refresh_token')
@@ -140,8 +141,6 @@ function Navbar({ onNavigate, activePath }) {
   return (
     <header className="sticky top-0 z-40 border-b border-green-100 bg-white/95 backdrop-blur-md">
       <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3.5 lg:px-10">
-        
-        {/* BRAND / LOGO */}
         <button
           type="button"
           onClick={() => handleNavClick('/dashboard')}
@@ -153,7 +152,6 @@ function Navbar({ onNavigate, activePath }) {
           <span>WasteWise</span>
         </button>
 
-        {/* DESKTOP NAV LINKS */}
         <nav className="hidden items-center gap-1 md:flex">
           {NAV_ITEMS.map((item) => {
             const isActive = item.key === activePath
@@ -180,10 +178,7 @@ function Navbar({ onNavigate, activePath }) {
           })}
         </nav>
 
-        {/* RIGHT SIDE CONTROLS (Notifications & User Profile) */}
         <div className="flex items-center gap-3">
-          
-          {/* Notifications Dropdown */}
           <div className="relative">
             <button
               id="notifications-button"
@@ -219,7 +214,6 @@ function Navbar({ onNavigate, activePath }) {
             )}
           </div>
 
-          {/* User Profile Dropdown */}
           <div className="relative">
             <button
               id="user-menu-button"
@@ -288,7 +282,6 @@ function Navbar({ onNavigate, activePath }) {
             )}
           </div>
 
-          {/* Mobile Menu Toggle Button */}
           <button
             type="button"
             onClick={() => setMobileMenuOpen((prev) => !prev)}
@@ -297,11 +290,9 @@ function Navbar({ onNavigate, activePath }) {
           >
             {mobileMenuOpen ? <X size={20} /> : <Menu size={20} />}
           </button>
-
         </div>
       </div>
 
-      {/* MOBILE COLLAPSIBLE DRAWER */}
       {mobileMenuOpen && (
         <div className="border-t border-green-100 bg-white px-6 py-4 md:hidden">
           <nav className="flex flex-col gap-1.5">

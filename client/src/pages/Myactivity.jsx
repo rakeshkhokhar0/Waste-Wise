@@ -3,7 +3,6 @@ import {
   AlertCircle,
   ArrowRight,
   Award,
-  CheckCircle2,
   ChevronDown,
   CircleCheck,
   Clock,
@@ -18,8 +17,7 @@ import Navbar from '../components/Navbar'
 import { getCategoryMeta, formatRelativeDate } from '../utils/wasteCategory'
 
 const API_BASE_URL = (
-  import.meta.env.VITE_API_BASE_URL ??
-  'http://localhost:8000/api/v1'
+  import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1'
 ).replace(/\/$/, '')
 
 function getAccessToken() {
@@ -65,64 +63,59 @@ function MyActivity({ onNavigate }) {
       setError('')
 
       const [historyRes, statsRes, rewardRes, transRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/waste/history?page=1&page_size=50`, {
+        fetch(`${API_BASE_URL}/waste/history?page=1&page_size=20`, {
           headers: authHeaders,
-        }),
-        fetch(`${API_BASE_URL}/rewards/stats`, { headers: authHeaders }),
-        fetch(`${API_BASE_URL}/rewards/me`, { headers: authHeaders }),
+        }).catch(() => null),
+        fetch(`${API_BASE_URL}/rewards/stats`, { headers: authHeaders }).catch(() => null),
+        fetch(`${API_BASE_URL}/rewards/me`, { headers: authHeaders }).catch(() => null),
         fetch(`${API_BASE_URL}/rewards/transactions?page=1&page_size=6`, {
           headers: authHeaders,
-        }),
+        }).catch(() => null),
       ])
-
-      if (historyRes.status === 401 || rewardRes.status === 401) {
-        onNavigate('/login')
-        return
-      }
 
       let allItems = []
       let totalUploads = 0
       let calculatedSteps = 0
       let detectedCategories = 0
 
-      if (historyRes.ok) {
+      if (historyRes && historyRes.ok) {
         const histData = await historyRes.json()
-        allItems = histData.items || []
-        totalUploads = histData.total ?? allItems.length
+        allItems = histData?.items || []
+        totalUploads = histData?.total ?? allItems.length
 
         const categorySet = new Set(
-          allItems.flatMap((a) => (a.categories || []).map((c) => c.category))
+          allItems.flatMap((a) => (a?.categories || []).map((c) => c?.category)).filter(Boolean)
         )
         detectedCategories = categorySet.size
 
         calculatedSteps = allItems.reduce(
-          (sum, a) => sum + (a.completed_steps || 0),
+          (sum, a) => sum + (Number(a?.completed_steps) || 0),
           0
         )
       }
 
       let userPoints = 0
-      if (rewardRes.ok) {
+      if (rewardRes && rewardRes.ok) {
         const rewData = await rewardRes.json()
-        userPoints = rewData.total_points ?? 0
+        userPoints = rewData?.total_points ?? 0
       }
 
-      if (statsRes.ok) {
+      if (statsRes && statsRes.ok) {
         const statsData = await statsRes.json()
-        if (statsData.total_completed_steps !== undefined) {
+        if (statsData?.total_completed_steps !== undefined) {
           calculatedSteps = Math.max(
             calculatedSteps,
-            statsData.total_completed_steps
+            Number(statsData.total_completed_steps)
           )
         }
-        if (statsData.completed_categories && detectedCategories === 0) {
-          detectedCategories = statsData.completed_categories
+        if (statsData?.completed_categories && detectedCategories === 0) {
+          detectedCategories = Number(statsData.completed_categories)
         }
       }
 
-      if (transRes.ok) {
+      if (transRes && transRes.ok) {
         const transData = await transRes.json()
-        setRecentTransactions(transData.items || [])
+        setRecentTransactions(transData?.items || [])
       }
 
       setSummaryStats({
@@ -132,16 +125,20 @@ function MyActivity({ onNavigate }) {
         totalUploads: totalUploads,
       })
 
+      // Fetch detailed view for top 2 records
       const top2List = allItems.slice(0, 2)
       if (top2List.length > 0) {
         const detailedTop2 = await Promise.all(
-          top2List.map((item) =>
-            fetch(`${API_BASE_URL}/waste/${item.id}`, { headers: authHeaders })
-              .then((res) => (res.ok ? res.json() : item))
-              .catch(() => item)
-          )
+          top2List.map(async (item) => {
+            try {
+              const res = await fetch(`${API_BASE_URL}/waste/${item.id}`, { headers: authHeaders })
+              return res.ok ? await res.json() : item
+            } catch {
+              return item
+            }
+          })
         )
-        setRecentActivities(detailedTop2)
+        setRecentActivities(detailedTop2.filter(Boolean))
       } else {
         setRecentActivities([])
       }
@@ -170,7 +167,7 @@ function MyActivity({ onNavigate }) {
 
       if (response.ok) {
         const data = await response.json()
-        const items = data.items || []
+        const items = data?.items || []
 
         if (page === 1) {
           setHistoryItems(items)
@@ -179,7 +176,7 @@ function MyActivity({ onNavigate }) {
         }
 
         setHistoryPage(page)
-        const total = data.total ?? items.length
+        const total = data?.total ?? items.length
         setHasMoreHistory(page * 10 < total)
       }
     } catch (err) {
@@ -198,7 +195,7 @@ function MyActivity({ onNavigate }) {
 
   const toggleStep = async (analysisId, category, step) => {
     const accessToken = getAccessToken()
-    if (!accessToken || !analysisId) return
+    if (!accessToken || !analysisId || !category?.id || !step?.id) return
 
     setUpdatingStepId(step.id)
     setError('')
@@ -249,7 +246,6 @@ function MyActivity({ onNavigate }) {
       <Navbar activePath="my-activity" onNavigate={onNavigate} />
 
       <div className="mx-auto max-w-7xl px-6 py-10 lg:px-10">
-        {/* HEADER */}
         <section className="overflow-hidden rounded-3xl bg-gradient-to-br from-green-800 to-emerald-600 p-7 text-white shadow-xl shadow-green-950/10 lg:p-10">
           <div className="flex flex-col justify-between gap-6 md:flex-row md:items-center">
             <div>
@@ -282,7 +278,6 @@ function MyActivity({ onNavigate }) {
           </div>
         </section>
 
-        {/* METRICS ROW */}
         <section className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <article className="rounded-2xl border border-green-100 bg-white p-5 shadow-sm">
             <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-green-100 text-green-700">
@@ -337,7 +332,6 @@ function MyActivity({ onNavigate }) {
           </div>
         )}
 
-        {/* LATEST ACTIONS */}
         <section className="mt-10">
           <div className="flex items-end justify-between">
             <div>
@@ -346,7 +340,7 @@ function MyActivity({ onNavigate }) {
               </p>
               <h2 className="mt-1 text-2xl font-bold">
                 {recentActivities.length > 0
-                  ? 'Recent Disposals (Last 2)'
+                  ? 'Recent Disposals'
                   : 'Recent Verified Actions'}
               </h2>
             </div>
@@ -360,9 +354,9 @@ function MyActivity({ onNavigate }) {
           ) : recentActivities.length > 0 ? (
             <div className="mt-6 space-y-6">
               {recentActivities.map((act) => {
-                const totalSteps = act.total_steps || 0
-                const completedSteps = act.completed_steps || 0
-                const progress = Math.round(act.progress_percentage || 0)
+                const totalSteps = Number(act?.total_steps) || 0
+                const completedSteps = Number(act?.completed_steps) || 0
+                const progress = Math.round(Number(act?.progress_percentage) || 0)
                 const isDone = totalSteps > 0 && completedSteps === totalSteps
 
                 return (
@@ -376,8 +370,9 @@ function MyActivity({ onNavigate }) {
                           {formatRelativeDate(act.created_at)}
                         </span>
                         <h3 className="mt-1 text-xl font-bold capitalize">
-                          {act.categories
-                            ?.map((c) => getCategoryMeta(c.category).label)
+                          {(act.categories || [])
+                            .map((c) => getCategoryMeta(c?.category).label)
+                            .filter(Boolean)
                             .join(', ') || 'Waste Analysis'}
                         </h3>
                       </div>
@@ -390,16 +385,13 @@ function MyActivity({ onNavigate }) {
                               : 'bg-amber-50 text-amber-700'
                           }`}
                         >
-                          {act.status ? act.status.replace(/_/g, ' ') : 'In Progress'}
+                          {act.status ? String(act.status).replace(/_/g, ' ') : 'In Progress'}
                         </span>
 
                         <button
                           type="button"
                           onClick={() => {
-                            sessionStorage.setItem(
-                              'wastewise_analysis',
-                              JSON.stringify(act)
-                            )
+                            sessionStorage.setItem('wastewise_analysis', JSON.stringify(act))
                             onNavigate('/waste-journey')
                           }}
                           className="flex items-center gap-1 rounded-xl bg-green-50 px-3.5 py-2 text-xs font-bold text-green-800 hover:bg-green-100"
@@ -438,21 +430,21 @@ function MyActivity({ onNavigate }) {
                           CATEGORIES &amp; DISPOSAL CHECKLIST
                         </p>
 
-                        {act.categories.map((category) => {
-                          const meta = getCategoryMeta(category.category)
+                        {act.categories.map((category, idx) => {
+                          const meta = getCategoryMeta(category?.category)
                           const Icon = meta.icon
-                          const isExpanded = !!expandedCategories[category.id]
+                          const catKey = category?.id || `${act.id}-${idx}`
+                          const isExpanded = !!expandedCategories[catKey]
+                          const steps = category?.disposal_steps || []
 
                           return (
                             <div
-                              key={category.id || category.category}
+                              key={catKey}
                               className="rounded-2xl border border-slate-100 bg-slate-50/50 p-4 transition"
                             >
                               <button
                                 type="button"
-                                onClick={() =>
-                                  category.id && toggleCategoryExpand(category.id)
-                                }
+                                onClick={() => toggleCategoryExpand(catKey)}
                                 className="flex w-full items-center justify-between text-left"
                               >
                                 <div className="flex items-center gap-3">
@@ -462,21 +454,21 @@ function MyActivity({ onNavigate }) {
                                     <Icon size={18} />
                                   </span>
                                   <div>
-                                    <h4 className="font-bold text-slate-800">
-                                      {meta.label}
-                                    </h4>
-                                    {category.items && (
+                                    <h4 className="font-bold text-slate-800">{meta.label}</h4>
+                                    {category?.items && (
                                       <p className="text-xs text-slate-500">
-                                        {category.items.join(', ')}
+                                        {Array.isArray(category.items)
+                                          ? category.items.join(', ')
+                                          : String(category.items)}
                                       </p>
                                     )}
                                   </div>
                                 </div>
 
-                                {category.disposal_steps && (
+                                {steps.length > 0 && (
                                   <div className="flex items-center gap-2">
                                     <span className="text-xs font-semibold text-slate-500">
-                                      {category.completed_steps}/{category.total_steps} steps
+                                      {steps.filter((s) => s.is_completed).length}/{steps.length} steps
                                     </span>
                                     <ChevronDown
                                       size={18}
@@ -488,10 +480,10 @@ function MyActivity({ onNavigate }) {
                                 )}
                               </button>
 
-                              {isExpanded && category.disposal_steps && (
+                              {isExpanded && steps.length > 0 && (
                                 <div className="mt-4 border-t border-slate-200/60 pt-3">
                                   <ul className="space-y-2">
-                                    {category.disposal_steps.map((step) => {
+                                    {steps.map((step) => {
                                       const isUpdating = updatingStepId === step.id
 
                                       return (
@@ -502,9 +494,7 @@ function MyActivity({ onNavigate }) {
                                           <button
                                             type="button"
                                             disabled={isUpdating}
-                                            onClick={() =>
-                                              toggleStep(act.id, category, step)
-                                            }
+                                            onClick={() => toggleStep(act.id, category, step)}
                                             className="mt-0.5 shrink-0 disabled:cursor-not-allowed"
                                           >
                                             {isUpdating ? (
@@ -553,7 +543,7 @@ function MyActivity({ onNavigate }) {
               <div className="flex items-center justify-between border-b border-slate-100 pb-4">
                 <div className="flex items-center gap-3">
                   <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-green-100 text-green-700">
-                    <CheckCircle2 size={20} />
+                    <CircleCheck size={20} />
                   </span>
                   <div>
                     <h3 className="font-bold text-slate-800">
@@ -580,10 +570,7 @@ function MyActivity({ onNavigate }) {
                   </div>
                 ) : (
                   recentTransactions.map((item) => (
-                    <div
-                      key={item.id}
-                      className="flex items-center justify-between py-4"
-                    >
+                    <div key={item.id} className="flex items-center justify-between py-4">
                       <div className="flex items-center gap-3">
                         <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-green-50 text-green-700">
                           <CircleCheck size={16} />
@@ -599,9 +586,7 @@ function MyActivity({ onNavigate }) {
                       </div>
                       <span
                         className={`text-sm font-bold ${
-                          item.points >= 0
-                            ? 'text-emerald-600'
-                            : 'text-rose-600'
+                          item.points >= 0 ? 'text-emerald-600' : 'text-rose-600'
                         }`}
                       >
                         {item.points >= 0 ? `+${item.points}` : item.points} pts
@@ -614,17 +599,14 @@ function MyActivity({ onNavigate }) {
           )}
         </section>
 
-        {/* FULL HISTORY WITH DUAL FALLBACK */}
         <section className="mt-12 pb-12">
           <div className="rounded-3xl border border-green-100 bg-white p-6 shadow-sm sm:p-8">
             <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
               <div>
-                <p className="text-xs font-bold tracking-[0.18em] text-green-700">
-                  ALL-TIME LOG
-                </p>
+                <p className="text-xs font-bold tracking-[0.18em] text-green-700">ALL-TIME LOG</p>
                 <h2 className="mt-1 text-2xl font-bold">Complete Activity History</h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  Total of {summaryStats.totalUploads || recentTransactions.length} actions recorded.
+                  Total of {summaryStats.totalUploads} waste disposals recorded.
                 </p>
               </div>
 
@@ -645,10 +627,12 @@ function MyActivity({ onNavigate }) {
                     <Loader2 className="mx-auto mb-2 animate-spin text-green-600" size={20} />
                     Loading full history...
                   </div>
-                ) : historyItems.length > 0 ? (
+                ) : historyItems.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-slate-500">No records found.</p>
+                ) : (
                   <div className="divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-100">
                     {historyItems.map((item) => {
-                      const primaryCat = item.categories?.[0]?.category
+                      const primaryCat = item?.categories?.[0]?.category
                       const meta = getCategoryMeta(primaryCat)
                       const Icon = meta.icon
 
@@ -657,10 +641,9 @@ function MyActivity({ onNavigate }) {
                           key={item.id}
                           onClick={async () => {
                             const token = getAccessToken()
-                            const fullRes = await fetch(
-                              `${API_BASE_URL}/waste/${item.id}`,
-                              { headers: { Authorization: `Bearer ${token}` } }
-                            )
+                            const fullRes = await fetch(`${API_BASE_URL}/waste/${item.id}`, {
+                              headers: { Authorization: `Bearer ${token}` },
+                            })
                             if (fullRes.ok) {
                               const fullData = await fullRes.json()
                               sessionStorage.setItem(
@@ -680,8 +663,9 @@ function MyActivity({ onNavigate }) {
                             </span>
                             <div>
                               <h4 className="font-semibold text-slate-900">
-                                {item.categories
-                                  ?.map((c) => getCategoryMeta(c.category).label)
+                                {(item.categories || [])
+                                  .map((c) => getCategoryMeta(c?.category).label)
+                                  .filter(Boolean)
                                   .join(', ') || 'Waste'}
                               </h4>
                               <p className="text-xs text-slate-500">
@@ -701,34 +685,12 @@ function MyActivity({ onNavigate }) {
                             </div>
 
                             <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-semibold capitalize text-green-700">
-                              {item.status ? item.status.replace(/_/g, ' ') : 'In Progress'}
+                              {item.status ? String(item.status).replace(/_/g, ' ') : 'In Progress'}
                             </span>
                           </div>
                         </div>
                       )
                     })}
-                  </div>
-                ) : (
-                  /* FALLBACK HISTORY DISPLAY (WHEN FULL ANALYSES ARE ZERO) */
-                  <div className="divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-100">
-                    {recentTransactions.length === 0 ? (
-                      <p className="py-6 text-center text-sm text-slate-500">No records found.</p>
-                    ) : (
-                      recentTransactions.map((item) => (
-                        <div key={item.id} className="flex items-center justify-between p-4 sm:px-6">
-                          <div className="flex items-center gap-3">
-                            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-green-50 text-green-700">
-                              <CircleCheck size={16} />
-                            </span>
-                            <div>
-                              <p className="text-sm font-semibold text-slate-800">{item.description}</p>
-                              <p className="text-xs text-slate-400">{formatRelativeDate(item.created_at)}</p>
-                            </div>
-                          </div>
-                          <span className="text-xs font-bold text-emerald-600">+{item.points} pts</span>
-                        </div>
-                      ))
-                    )}
                   </div>
                 )}
 
@@ -740,7 +702,9 @@ function MyActivity({ onNavigate }) {
                       onClick={() => loadFullHistory(historyPage + 1)}
                       className="flex items-center gap-2 rounded-xl border border-green-200 px-5 py-2.5 text-sm font-semibold text-green-800 transition hover:bg-green-50 disabled:opacity-50"
                     >
-                      {historyLoading ? <Loader2 size={16} className="animate-spin" /> : null}
+                      {historyLoading ? (
+                        <Loader2 size={16} className="animate-spin" />
+                      ) : null}
                       Load More Records
                     </button>
                   </div>

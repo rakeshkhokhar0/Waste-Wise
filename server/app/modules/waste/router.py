@@ -2,6 +2,8 @@
 
 from datetime import date
 from uuid import UUID
+import logging
+import traceback
 
 from fastapi import (
     APIRouter,
@@ -10,7 +12,7 @@ from fastapi import (
     HTTPException,
     Query,
     UploadFile,
-    status,
+    status as http_status,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,6 +46,7 @@ from server.app.modules.waste.services.waste_service import (
     WasteServiceError,
 )
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/waste",
@@ -59,26 +62,10 @@ router = APIRouter(
 def get_waste_service(
     session: AsyncSession = Depends(get_db),
 ) -> WasteService:
-    """
-    Build WasteService with all required dependencies.
-
-    Dependency chain:
-
-        WasteService
-            |-- WasteRepository
-            |-- ImageService
-            |-- AIService
-            |-- DisposalService
-            `-- RewardService
-                    `-- RewardRepository
-    """
-
     waste_repository = WasteRepository(
         session=session,
     )
-
     image_service = ImageService()
-
     ai_service = AIService()
 
     disposal_service = DisposalService(
@@ -102,37 +89,153 @@ def get_waste_service(
 
 
 # ============================================================
-# 1. ANALYZE WASTE IMAGE
+# 1. GET ACTIVE PENDING DISPOSAL (STATIC ROUTE FIRST)
+# ============================================================
+
+
+@router.get(
+    "/active",
+    status_code=http_status.HTTP_200_OK,
+)
+async def get_active_disposal(
+    current_user: User = Depends(get_current_user),
+    waste_service: WasteService = Depends(get_waste_service),
+):
+    try:
+        active = await waste_service.get_active_analysis(user_id=current_user.id)
+        if not active:
+            return {"has_active": False, "analysis": None}
+
+        return {
+            "has_active": True,
+            "analysis": _build_analysis_response(active, waste_service),
+        }
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to check active disposal: {exc}",
+        )
+
+
+# ============================================================
+# 2. WASTE HISTORY (STATIC ROUTE FIRST)
+# ============================================================
+
+
+@router.get(
+    "/history",
+    response_model=WasteAnalysisHistoryResponse,
+)
+async def get_waste_history(
+    category: WasteCategory | None = Query(default=None),
+    status_filter: WasteAnalysisStatus | None = Query(default=None, alias="status"),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    waste_service: WasteService = Depends(get_waste_service),
+):
+    try:
+        analyses, total = await waste_service.get_history(
+            user_id=current_user.id,
+            category=category,
+            status=status_filter,
+            start_date=start_date,
+            end_date=end_date,
+            page=page,
+            page_size=page_size,
+        )
+
+        items = []
+        for analysis in analyses:
+            detailed = await waste_service.get_analysis(
+                analysis_id=analysis.id,
+                user_id=current_user.id,
+            )
+            items.append(_build_history_item(detailed, waste_service))
+
+        return WasteAnalysisHistoryResponse(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+            has_next=(page * page_size) < total,
+        )
+
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch waste history: {exc}",
+        )
+
+
+# ============================================================
+# 3. RECENT ANALYSES (STATIC ROUTE FIRST)
+# ============================================================
+
+
+@router.get(
+    "/recent",
+    response_model=list[WasteAnalysisListResponse],
+)
+async def get_recent_analyses(
+    limit: int = Query(default=5, ge=1, le=50),
+    current_user: User = Depends(get_current_user),
+    waste_service: WasteService = Depends(get_waste_service),
+):
+    try:
+        analyses = await waste_service.get_recent_analyses(
+            user_id=current_user.id,
+            limit=limit,
+        )
+
+        items = []
+        for analysis in analyses:
+            detailed = await waste_service.get_analysis(
+                analysis_id=analysis.id,
+                user_id=current_user.id,
+            )
+            items.append(_build_history_item(detailed, waste_service))
+
+        return items
+
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch recent analyses.",
+        )
+
+
+# ============================================================
+# 4. ANALYZE WASTE IMAGE
 # ============================================================
 
 
 @router.post(
     "/analyze",
     response_model=WasteAnalysisResponse,
-    status_code=status.HTTP_201_CREATED,
+    status_code=http_status.HTTP_201_CREATED,
 )
 async def analyze_waste(
     image: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     waste_service: WasteService = Depends(get_waste_service),
 ):
-    """
-    Upload and analyze a waste image.
-
-    One AI call is used for the complete analysis.
-    """
-
     try:
-        analysis = await waste_service.analyze_waste(
+        active = await waste_service.get_active_analysis(user_id=current_user.id)
+        if active:
+            raise HTTPException(
+                status_code=http_status.HTTP_400_BAD_REQUEST,
+                detail="You have a pending disposal plan. Please complete your current steps before uploading a new image.",
+            )
+
+        complete_analysis = await waste_service.analyze_waste(
             user_id=current_user.id,
             image=image,
-        )
-
-        # Fetch the complete analysis because the object returned
-        # by analyze_waste() may not have its relationships loaded.
-        complete_analysis = await waste_service.get_analysis(
-            analysis_id=analysis.id,
-            user_id=current_user.id,
         )
 
         return _build_analysis_response(
@@ -140,21 +243,25 @@ async def analyze_waste(
             waste_service,
         )
 
+    except HTTPException:
+        raise
+
     except WasteServiceError as exc:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc),
         ) from exc
 
-    except Exception:
+    except Exception as exc:
+        traceback.print_exc()
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to analyze waste image.",
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to analyze waste image: {exc}",
         )
 
 
 # ============================================================
-# 2. GET COMPLETE ANALYSIS
+# 5. GET COMPLETE ANALYSIS (PATH PARAMETER MATCHED LAST)
 # ============================================================
 
 
@@ -167,10 +274,6 @@ async def get_analysis(
     current_user: User = Depends(get_current_user),
     waste_service: WasteService = Depends(get_waste_service),
 ):
-    """
-    Get one complete waste analysis.
-    """
-
     try:
         analysis = await waste_service.get_analysis(
             analysis_id=analysis_id,
@@ -184,19 +287,20 @@ async def get_analysis(
 
     except WasteServiceError as exc:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         ) from exc
 
     except Exception:
+        traceback.print_exc()
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch waste analysis.",
         )
 
 
 # ============================================================
-# 3. GET CATEGORY-WISE DISPOSAL STEPS
+# 6. GET CATEGORY-WISE DISPOSAL STEPS
 # ============================================================
 
 
@@ -210,10 +314,6 @@ async def get_category_disposal_steps(
     current_user: User = Depends(get_current_user),
     waste_service: WasteService = Depends(get_waste_service),
 ):
-    """
-    Get all disposal steps for one category of an analysis.
-    """
-
     try:
         category = (
             await waste_service.waste_repository.get_category_by_id(
@@ -225,7 +325,7 @@ async def get_category_disposal_steps(
 
         if category is None:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
+                status_code=http_status.HTTP_404_NOT_FOUND,
                 detail="Waste category not found.",
             )
 
@@ -239,14 +339,15 @@ async def get_category_disposal_steps(
         raise
 
     except Exception:
+        traceback.print_exc()
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch disposal steps.",
         )
 
 
 # ============================================================
-# 4. COMPLETE / UNCOMPLETE DISPOSAL STEP
+# 7. COMPLETE / UNCOMPLETE DISPOSAL STEP
 # ============================================================
 
 
@@ -262,13 +363,6 @@ async def update_disposal_step(
     current_user: User = Depends(get_current_user),
     waste_service: WasteService = Depends(get_waste_service),
 ):
-    """
-    Mark a disposal step as completed or incomplete.
-
-    Marking a step complete also awards step / category /
-    analysis reward points where applicable.
-    """
-
     try:
         analysis = await waste_service.update_disposal_step(
             step_id=step_id,
@@ -290,180 +384,46 @@ async def update_disposal_step(
 
     except WasteServiceError as exc:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         ) from exc
 
     except Exception:
+        traceback.print_exc()
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update disposal step.",
         )
 
 
 # ============================================================
-# 5. WASTE HISTORY
-# ============================================================
-
-
-@router.get(
-    "/history",
-    response_model=WasteAnalysisHistoryResponse,
-)
-async def get_waste_history(
-    category: WasteCategory | None = Query(
-        default=None,
-    ),
-    status_filter: WasteAnalysisStatus | None = Query(
-        default=None,
-        alias="status",
-    ),
-    start_date: date | None = Query(
-        default=None,
-    ),
-    end_date: date | None = Query(
-        default=None,
-    ),
-    page: int = Query(
-        default=1,
-        ge=1,
-    ),
-    page_size: int = Query(
-        default=20,
-        ge=1,
-        le=100,
-    ),
-    current_user: User = Depends(get_current_user),
-    waste_service: WasteService = Depends(get_waste_service),
-):
-    """
-    Get paginated waste history.
-    """
-
-    try:
-        analyses, total = await waste_service.get_history(
-            user_id=current_user.id,
-            category=category,
-            status=status_filter,
-            start_date=start_date,
-            end_date=end_date,
-            page=page,
-            page_size=page_size,
-        )
-
-        items = [
-            _build_history_item(
-                analysis,
-                waste_service,
-            )
-            for analysis in analyses
-        ]
-
-        return WasteAnalysisHistoryResponse(
-            items=items,
-            total=total,
-            page=page,
-            page_size=page_size,
-            has_next=(page * page_size) < total,
-        )
-
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
-
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch waste history.",
-        )
-
-
-# ============================================================
-# 6. RECENT ANALYSES
-# ============================================================
-
-
-@router.get(
-    "/recent",
-    response_model=list[WasteAnalysisListResponse],
-)
-async def get_recent_analyses(
-    limit: int = Query(
-        default=5,
-        ge=1,
-        le=50,
-    ),
-    current_user: User = Depends(get_current_user),
-    waste_service: WasteService = Depends(get_waste_service),
-):
-    """
-    Get the user's most recent waste analyses.
-    """
-
-    try:
-        analyses = (
-            await waste_service.get_recent_analyses(
-                user_id=current_user.id,
-                limit=limit,
-            )
-        )
-
-        return [
-            _build_history_item(
-                analysis,
-                waste_service,
-            )
-            for analysis in analyses
-        ]
-
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        ) from exc
-
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch recent analyses.",
-        )
-
-
-# ============================================================
-# 7. DELETE ANALYSIS
+# 8. DELETE ANALYSIS
 # ============================================================
 
 
 @router.delete(
     "/{analysis_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
+    status_code=http_status.HTTP_204_NO_CONTENT,
 )
 async def delete_analysis(
     analysis_id: UUID,
     current_user: User = Depends(get_current_user),
     waste_service: WasteService = Depends(get_waste_service),
 ):
-    """
-    Delete a waste analysis.
-    """
-
     try:
         await waste_service.delete_analysis(
             analysis_id=analysis_id,
             user_id=current_user.id,
         )
-
     except WasteServiceError as exc:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         ) from exc
-
     except Exception:
+        traceback.print_exc()
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete waste analysis.",
         )
 
@@ -477,21 +437,13 @@ def _build_analysis_response(
     analysis: WasteAnalysis,
     waste_service: WasteService,
 ) -> WasteAnalysisResponse:
-    """
-    Convert a SQLAlchemy WasteAnalysis into the complete
-    frontend response.
-    """
-
     category_responses = []
-
     all_steps = []
 
-    for category_result in analysis.category_results:
+    cat_results = getattr(analysis, "category_results", []) or []
 
-        category_steps = list(
-            category_result.disposal_steps
-        )
-
+    for category_result in cat_results:
+        category_steps = list(getattr(category_result, "disposal_steps", []) or [])
         all_steps.extend(category_steps)
 
         (
@@ -506,8 +458,8 @@ def _build_analysis_response(
             {
                 "id": category_result.id,
                 "category": category_result.category,
-                "items": category_result.items,
-                "confidence": category_result.confidence,
+                "items": getattr(category_result, "items", []) or [],
+                "confidence": getattr(category_result, "confidence", 1.0),
                 "disposal_steps": category_steps,
                 "total_steps": total_steps,
                 "completed_steps": completed_steps,
@@ -527,7 +479,7 @@ def _build_analysis_response(
         id=analysis.id,
         image_url=analysis.image_url,
         status=analysis.status,
-        ai_summary=analysis.ai_summary,
+        ai_summary=getattr(analysis, "ai_summary", ""),
         categories=category_responses,
         total_steps=total_steps,
         completed_steps=completed_steps,
@@ -541,25 +493,18 @@ def _build_history_item(
     analysis: WasteAnalysis,
     waste_service: WasteService,
 ) -> WasteAnalysisListResponse:
-    """
-    Build lightweight history response.
-    """
-
     categories = []
-
     all_steps = []
 
-    for category_result in analysis.category_results:
+    cat_results = getattr(analysis, "category_results", []) or []
 
+    for category_result in cat_results:
         categories.append(
             {
                 "category": category_result.category,
             }
         )
-
-        all_steps.extend(
-            category_result.disposal_steps
-        )
+        all_steps.extend(getattr(category_result, "disposal_steps", []) or [])
 
     (
         total_steps,

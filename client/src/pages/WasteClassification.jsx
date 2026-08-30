@@ -10,8 +10,7 @@ import Navbar from '../components/Navbar'
 import { getCategoryMeta } from '../utils/wasteCategory'
 
 const API_BASE_URL = (
-  import.meta.env.VITE_API_BASE_URL ??
-  'http://localhost:8000/api/v1'
+  import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1'
 ).replace(/\/$/, '')
 
 function getAccessToken() {
@@ -23,7 +22,7 @@ function getAccessToken() {
 
 function WasteClassification({ onNavigate }) {
   const [image, setImage] = useState(null)
-  const [status, setStatus] = useState('loading') // 'loading' | 'success' | 'error'
+  const [status, setStatus] = useState('loading')
   const [message, setMessage] = useState('Preparing your image...')
   const [analysis, setAnalysis] = useState(null)
   const [error, setError] = useState('')
@@ -34,16 +33,19 @@ function WasteClassification({ onNavigate }) {
         const storedImage = sessionStorage.getItem('wastewise_uploaded_image')
 
         if (!storedImage) {
-          throw new Error('No waste image was found. Please upload an image again.')
+          throw new Error(
+            'No waste image was found. Please upload an image again.'
+          )
         }
 
         setImage(storedImage)
         setMessage('Uploading image to WasteWise AI...')
 
-        // Convert stored base64 image into a Blob & File
         const response = await fetch(storedImage)
         const blob = await response.blob()
-        const file = new File([blob], 'waste-image.jpg', { type: 'image/jpeg' })
+        const file = new File([blob], 'waste-image.jpg', {
+          type: 'image/jpeg',
+        })
 
         const formData = new FormData()
         formData.append('image', file)
@@ -67,8 +69,6 @@ function WasteClassification({ onNavigate }) {
 
         setMessage('AI analysis completed successfully.')
         setAnalysis(data)
-
-        // Store analysis result for the WasteJourney component
         sessionStorage.setItem('wastewise_analysis', JSON.stringify(data))
         setStatus('success')
       } catch (err) {
@@ -110,18 +110,16 @@ function WasteClassification({ onNavigate }) {
           </p>
         </section>
 
-        {/* IMAGE PREVIEW */}
         {image && (
           <div className="mx-auto mt-8 max-w-md overflow-hidden rounded-3xl border border-green-100 bg-white p-3 shadow-lg">
             <img
               src={image}
               alt="Uploaded waste"
-              className="max-h-[420px] w-full rounded-2xl object-cover"
+              className="max-h-[380px] w-full rounded-2xl object-cover"
             />
           </div>
         )}
 
-        {/* LOADING ANIMATION */}
         {status === 'loading' && (
           <div className="mx-auto mt-8 max-w-2xl rounded-3xl border border-green-100 bg-white p-8 shadow-sm">
             <div className="flex items-center justify-center">
@@ -158,15 +156,18 @@ function WasteClassification({ onNavigate }) {
           </div>
         )}
 
-        {/* ERROR STATE */}
         {status === 'error' && (
           <div className="mx-auto mt-8 max-w-2xl rounded-3xl border border-red-100 bg-white p-8 text-center shadow-sm">
             <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-red-100 text-red-600">
               <AlertCircle size={32} />
             </div>
 
-            <h2 className="mt-5 text-xl font-bold">We couldn't analyze this image</h2>
-            <p className="mt-3 text-sm leading-relaxed text-slate-600">{error}</p>
+            <h2 className="mt-5 text-xl font-bold">
+              We couldn't analyze this image
+            </h2>
+            <p className="mt-3 text-sm leading-relaxed text-slate-600">
+              {error}
+            </p>
 
             <button
               type="button"
@@ -178,10 +179,8 @@ function WasteClassification({ onNavigate }) {
           </div>
         )}
 
-        {/* SUCCESS RESULT */}
         {status === 'success' && analysis && (
           <div className="mt-8">
-            {/* AI Summary */}
             {analysis.ai_summary && (
               <section className="rounded-3xl border border-green-100 bg-white p-6 shadow-sm sm:p-8">
                 <div className="flex items-start gap-4">
@@ -200,20 +199,23 @@ function WasteClassification({ onNavigate }) {
               </section>
             )}
 
-            {/* Detected Categories Preview */}
             <section className="mt-6">
               <div>
                 <p className="text-xs font-bold tracking-[0.15em] text-green-700">
                   DETECTED WASTE
                 </p>
-                <h2 className="mt-2 text-2xl font-bold">What AI found in your image</h2>
+                <h2 className="mt-2 text-2xl font-bold">
+                  What AI found in your image
+                </h2>
               </div>
 
               <div className="mt-5 grid gap-4">
                 {analysis.categories?.map((category, index) => {
                   const meta = getCategoryMeta(category.category)
                   const Icon = meta.icon
-                  const confidence = Math.round(Number(category.confidence || 0) * 100)
+                  const confidence = Math.round(
+                    Number(category.confidence || 0) * 100
+                  )
 
                   return (
                     <article
@@ -230,7 +232,8 @@ function WasteClassification({ onNavigate }) {
                           <div>
                             <h3 className="text-lg font-bold">{meta.label}</h3>
                             <p className="text-xs text-slate-500">
-                              {confidence}% AI confidence &middot; {category.items?.length || 0} item
+                              {confidence}% AI confidence &middot;{' '}
+                              {category.items?.length || 0} item
                               {category.items?.length === 1 ? '' : 's'}
                             </p>
                           </div>
@@ -241,7 +244,6 @@ function WasteClassification({ onNavigate }) {
                         </span>
                       </div>
 
-                      {/* Items */}
                       <div className="mt-4 flex flex-wrap gap-2">
                         {category.items?.map((item) => (
                           <span
@@ -253,22 +255,15 @@ function WasteClassification({ onNavigate }) {
                         ))}
                       </div>
 
-                      {/* Disposal Preview */}
-                      <div className="mt-4 rounded-2xl bg-green-50 p-4">
+                      <div className="mt-4 rounded-2xl bg-green-50/70 p-4">
                         <div className="flex items-center gap-2 text-sm font-bold text-green-800">
                           <CheckCircle2 size={18} />
-                          AI disposal recommendation
+                          Disposal Instructions Prepared
                         </div>
-                        <p className="mt-2 text-sm leading-relaxed text-slate-600">
+                        <p className="mt-1.5 text-sm text-slate-600">
                           {category.disposal_steps?.[0]?.instruction ||
-                            'Follow the recommended disposal instructions.'}
+                            'Complete disposal steps generated.'}
                         </p>
-                        {category.disposal_steps?.length > 1 && (
-                          <p className="mt-2 text-xs font-semibold text-green-700">
-                            + {category.disposal_steps.length - 1} more recommendation
-                            {category.disposal_steps.length - 1 === 1 ? '' : 's'}
-                          </p>
-                        )}
                       </div>
                     </article>
                   )
@@ -276,7 +271,6 @@ function WasteClassification({ onNavigate }) {
               </div>
             </section>
 
-            {/* CONTINUE BUTTON */}
             <div className="mt-8 flex justify-center pb-12">
               <button
                 type="button"
