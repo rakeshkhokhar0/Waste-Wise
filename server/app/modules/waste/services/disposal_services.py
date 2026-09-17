@@ -181,12 +181,14 @@ class DisposalService:
         self,
         step: DisposalStep,
         analysis: WasteAnalysis,
+        is_completed: bool = True,
+        commit: bool = True,
     ) -> WasteAnalysis:
 
         try:
             await self.waste_repository.update_step_completion(
                 step=step,
-                is_completed=True,
+                is_completed=is_completed,
             )
 
             all_steps = self._get_all_steps(analysis)
@@ -210,15 +212,18 @@ class DisposalService:
                 )
 
             await self.session.flush()
-            await self.session.commit()
+
+            if commit:
+                await self.session.commit()
 
             return analysis
 
         except Exception as exc:
-            await self.session.rollback()
+            if commit:
+                await self.session.rollback()
 
             raise DisposalServiceError(
-                "Failed to complete disposal step."
+                "Failed to update disposal step completion."
             ) from exc
 
     # ========================================================

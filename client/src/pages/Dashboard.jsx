@@ -145,14 +145,20 @@ function Dashboard({ onNavigate }) {
         allItems = histData?.items || []
         totalUploads = histData?.total ?? allItems.length
 
-        // Secondary fallback to history if active endpoint was null
+        // Secondary fallback to history: only check the most recent item if active endpoint returned null
         if (!activeItem && allItems.length > 0) {
-          const candidate = allItems.find(
-            (it) => it?.status === 'in_progress' || (it?.total_steps > 0 && it?.completed_steps < it?.total_steps)
-          )
-          if (candidate) {
-            const detailRes = await fetch(`${API_BASE_URL}/waste/${candidate.id}`, { headers: authHeaders }).catch(() => null)
-            activeItem = detailRes && detailRes.ok ? await detailRes.json() : candidate
+          const latestItem = allItems[0]
+          if (
+            latestItem?.status === 'in_progress' ||
+            (latestItem?.total_steps > 0 &&
+              latestItem?.completed_steps < latestItem?.total_steps)
+          ) {
+            const detailRes = await fetch(
+              `${API_BASE_URL}/waste/${latestItem.id}`,
+              { headers: authHeaders }
+            ).catch(() => null)
+            activeItem =
+              detailRes && detailRes.ok ? await detailRes.json() : latestItem
           }
         }
 

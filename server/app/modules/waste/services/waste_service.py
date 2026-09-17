@@ -48,37 +48,41 @@ class WasteService:
     async def get_active_analysis(self, user_id: UUID) -> WasteAnalysis | None:
         """
         Check if user has an unfinished disposal plan in progress.
-        Loads eager relationships to prevent greenlet IO errors.
+        Evaluates the user's latest waste analysis to ensure historical
+        completed/abandoned workflows do not block current active tasks.
         """
         try:
-            analyses, _ = await self.waste_repository.get_history(
-                user_id=user_id,
-                page=1,
-                page_size=10,
+            latest_analysis = (
+                await self.waste_repository.get_latest_analysis_with_details(
+                    user_id=user_id
+                )
+            )
+            if not latest_analysis:
+                return None
+
+            # If the latest analysis is already marked completed or failed, there is no active task
+            if latest_analysis.status in (
+                WasteAnalysisStatus.COMPLETED,
+                WasteAnalysisStatus.FAILED,
+            ):
+                return None
+
+            # Calculate progress on all disposal steps for the latest analysis
+            all_steps = self.disposal_service._get_all_steps(latest_analysis)
+            total_steps, completed_steps, _ = (
+                self.disposal_service.calculate_progress(all_steps)
             )
 
-            for item in analyses:
-                full_analysis = (
-                    await self.waste_repository.get_analysis_with_details(
-                        analysis_id=item.id,
-                        user_id=user_id,
-                    )
-                )
-                if not full_analysis:
-                    continue
+            # If all steps are completed, ensure status is marked COMPLETED and return None
+            if total_steps > 0 and completed_steps == total_steps:
+                if latest_analysis.status != WasteAnalysisStatus.COMPLETED:
+                    latest_analysis.status = WasteAnalysisStatus.COMPLETED
+                    await self.session.flush()
+                    await self.session.commit()
+                return None
 
-                if full_analysis.status == WasteAnalysisStatus.IN_PROGRESS:
-                    return full_analysis
-
-                all_steps = self.disposal_service._get_all_steps(full_analysis)
-                total_steps, completed_steps, _ = (
-                    self.disposal_service.calculate_progress(all_steps)
-                )
-
-                if total_steps > 0 and completed_steps < total_steps:
-                    return full_analysis
-
-            return None
+            # Otherwise, if there are pending steps or status is in_progress / pending, it is active
+            return latest_analysis
         except Exception as exc:
             raise WasteServiceError(
                 f"Failed to check active analysis: {exc}"
@@ -180,25 +184,73 @@ class WasteService:
             if not step:
                 raise WasteServiceError("Disposal step not found.")
 
-            # Update step completion
-            await self.disposal_service.update_step_completion(
+            # 1. Update the target step's completion status (flush only)
+            await self.waste_repository.update_step_completion(
                 step=step,
                 is_completed=is_completed,
             )
 
-            # Re-fetch the eager analysis to re-calculate completion
+            # 2. Re-fetch the full analysis with updated relationships
             analysis = await self.get_analysis(
                 analysis_id=analysis_id,
                 user_id=user_id,
             )
 
-            return await self.disposal_service.complete_step_and_check_analysis(
-                step=step,
-                analysis=analysis,
+            # 3. Recalculate completion across all steps
+            all_steps = self.disposal_service._get_all_steps(analysis)
+            total_steps, completed_steps, _ = (
+                self.disposal_service.calculate_progress(all_steps)
             )
+
+            if total_steps > 0 and completed_steps == total_steps:
+                analysis.status = WasteAnalysisStatus.COMPLETED
+            else:
+                analysis.status = WasteAnalysisStatus.IN_PROGRESS
+
+            await self.session.flush()
+
+            # 4. If step was completed (is_completed=True) and reward_service is configured,
+            # award step, category, and analysis completion rewards as appropriate.
+            if self.reward_service and is_completed:
+                try:
+                    await self.reward_service.award_step_reward(
+                        user_id=user_id,
+                        step_id=step_id,
+                    )
+                except Exception:
+                    pass
+
+                cat_result = next(
+                    (c for c in analysis.category_results if c.id == category_result_id),
+                    None,
+                )
+                if cat_result and cat_result.disposal_steps:
+                    if all(s.is_completed for s in cat_result.disposal_steps):
+                        try:
+                            await self.reward_service.award_category_completion_bonus(
+                                user_id=user_id,
+                                category_id=category_result_id,
+                            )
+                        except Exception:
+                            pass
+
+                if analysis.status == WasteAnalysisStatus.COMPLETED:
+                    try:
+                        await self.reward_service.award_analysis_completion_bonus(
+                            user_id=user_id,
+                            analysis_id=analysis_id,
+                        )
+                    except Exception:
+                        pass
+
+            # 5. Commit all changes in a single transaction boundary
+            await self.session.commit()
+
+            return analysis
         except WasteServiceError:
             raise
         except Exception as exc:
+            await self.session.rollback()
             raise WasteServiceError(
                 f"Failed to update disposal step: {exc}"
             ) from exc

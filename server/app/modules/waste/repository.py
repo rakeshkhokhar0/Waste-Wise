@@ -92,6 +92,33 @@ class WasteRepository:
 
         return result.scalar_one_or_none()
 
+    async def get_latest_analysis_with_details(
+        self,
+        user_id: UUID,
+    ) -> WasteAnalysis | None:
+
+        stmt = (
+            select(WasteAnalysis)
+            .options(
+                selectinload(
+                    WasteAnalysis.category_results
+                ).selectinload(
+                    WasteCategoryResult.disposal_steps
+                )
+            )
+            .where(
+                WasteAnalysis.user_id == user_id,
+            )
+            .order_by(
+                WasteAnalysis.created_at.desc()
+            )
+            .limit(1)
+        )
+
+        result = await self.session.execute(stmt)
+
+        return result.scalar_one_or_none()
+
     async def update_analysis(
         self,
         analysis: WasteAnalysis,
